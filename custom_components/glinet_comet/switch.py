@@ -17,6 +17,7 @@ from .api import CometApiClient, CometError
 from .const import DOMAIN
 from .coordinator import CometDataUpdateCoordinator
 from .entity import CometEntity, CometGpioEntity
+from .gpio import async_setup_gpio_entities
 
 
 def _set_jiggler_enabled(data: dict[str, Any], value: bool) -> None:
@@ -88,14 +89,16 @@ async def async_setup_entry(
     ]
     entities.append(CometMsdConnectedSwitch(coordinator, entry))
 
-    data = coordinator.data or {}
-    for channel, config in parsers.gpio_model_channels(data, "outputs").items():
-        if not isinstance(config, dict):
-            continue
-        if config.get("switch") is True:
-            entities.append(CometGpioSwitch(coordinator, entry, channel))
-
     async_add_entities(entities)
+
+    def _gpio_switch_factory(channel: str, config: object) -> SwitchEntity | None:
+        if not isinstance(config, dict) or config.get("switch") is not True:
+            return None
+        return CometGpioSwitch(coordinator, entry, channel)
+
+    async_setup_gpio_entities(
+        entry, coordinator, async_add_entities, "outputs", _gpio_switch_factory
+    )
 
 
 class CometSwitch(CometEntity, SwitchEntity):

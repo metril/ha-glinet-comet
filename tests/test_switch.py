@@ -59,6 +59,10 @@ class FakeEntry:
         self.title = "Comet Test"
         self.data = {"host": "10.0.0.5"}
         self.options: dict = {}
+        self.unload_callbacks: list = []
+
+    def async_on_unload(self, fn) -> None:
+        self.unload_callbacks.append(fn)
 
 
 class FakeHass:
@@ -258,3 +262,102 @@ async def test_setup_entry_skips_non_dict_gpio_output_config():
     gpio_switches = [e for e in added if isinstance(e, CometGpioSwitch)]
     assert len(gpio_switches) == 1
     assert gpio_switches[0]._channel == "out_switch"
+
+
+class RecordingAddEntities:
+    """Tracks every `async_add_entities` batch, so dedupe tests can assert
+    both "no duplicate entity" and "no extra batch was even added"."""
+
+    def __init__(self) -> None:
+        self.batches: list[list] = []
+        self.added: list = []
+
+    def __call__(self, entities) -> None:
+        entities = list(entities)
+        self.batches.append(entities)
+        self.added.extend(entities)
+
+
+async def _setup_recording(data: dict) -> tuple[CometDataUpdateCoordinator, RecordingAddEntities]:
+    coord = CometDataUpdateCoordinator(FakeHass(), FakeEntry(), FakeClient())
+    coord.data = data
+    hass = FakeHass()
+    hass.data[DOMAIN] = {coord.entry.entry_id: {"coordinator": coord}}
+    add = RecordingAddEntities()
+    await async_setup_entry(hass, coord.entry, add)
+    return coord, add
+
+
+# --- Dynamic GPIO add: channels can appear after setup, without a reload ---
+
+
+@pytest.mark.asyncio
+async def test_gpio_switches_added_dynamically_when_model_appears():
+    coord, add = await _setup_recording({})
+    assert [e for e in add.added if isinstance(e, CometGpioSwitch)] == []
+    batches_before = len(add.batches)
+
+    coord.data = _load_fixture("state_gpio.json")
+    coord.async_update_listeners()
+
+    gpio_switches = [e for e in add.added if isinstance(e, CometGpioSwitch)]
+    assert {e._channel for e in gpio_switches} == {"out_switch"}
+    assert len(add.batches) == batches_before + 1
+
+
+@pytest.mark.asyncio
+async def test_gpio_switches_not_duplicated_on_same_model_object():
+    data = _load_fixture("state_gpio.json")
+    coord, add = await _setup_recording(data)
+    gpio_switches = [e for e in add.added if isinstance(e, CometGpioSwitch)]
+    assert {e._channel for e in gpio_switches} == {"out_switch"}
+    batches_before = len(add.batches)
+
+    coord.async_update_listeners()  # same gpio_model object, nothing changed
+
+    assert len(add.batches) == batches_before  # async_add_entities not called again
+    gpio_switches_after = [e for e in add.added if isinstance(e, CometGpioSwitch)]
+    assert len(gpio_switches_after) == 1
+
+
+@pytest.mark.asyncio
+async def test_gpio_switch_channel_vanishing_leaves_entity_unavailable_not_removed():
+    data = _load_fixture("state_gpio.json")
+    coord, add = await _setup_recording(data)
+    gpio_switches = [e for e in add.added if isinstance(e, CometGpioSwitch)]
+    out_switch = next(e for e in gpio_switches if e._channel == "out_switch")
+    assert out_switch.available is True
+
+    new_data = dict(data)
+    new_data["gpio_model"] = {
+        "inputs": data["gpio_model"]["inputs"],
+        "outputs": {},
+    }
+    new_data["gpio"] = {"inputs": data["gpio"]["inputs"], "outputs": {}}
+    coord.data = new_data
+    batches_before = len(add.batches)
+
+    coord.async_update_listeners()
+
+    gpio_switches_after = [e for e in add.added if isinstance(e, CometGpioSwitch)]
+    assert len(gpio_switches_after) == 1  # out_switch's entity is never removed
+    assert len(add.batches) == batches_before  # no new channel to add
+    assert out_switch.available is False  # channel gone -> not online -> unavailable
+
+
+@pytest.mark.asyncio
+async def test_gpio_switches_fresh_but_equal_model_adds_nothing():
+    """A new dict object with identical content must not re-add entities --
+    proves the per-channel `set` dedupes, not just the object-identity guard."""
+    data = _load_fixture("state_gpio.json")
+    coord, add = await _setup_recording(data)
+    batches_before = len(add.batches)
+
+    coord.data = dict(data) | {
+        "gpio_model": json.loads(json.dumps(data["gpio_model"])),
+    }
+    coord.async_update_listeners()
+
+    gpio_switches = [e for e in add.added if isinstance(e, CometGpioSwitch)]
+    assert len(gpio_switches) == 1  # still just the original one
+    assert len(add.batches) == batches_before  # nothing new, so no add_entities call

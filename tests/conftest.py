@@ -118,12 +118,23 @@ def _stub_homeassistant() -> None:
             self.update_interval = update_interval
             self.data = None
             self.last_update_success = True
+            self._listeners: list = []
 
         def __init_subclass__(cls, **k):
             super().__init_subclass__()
 
+        def async_add_listener(self, update_callback, context=None):
+            self._listeners.append(update_callback)
+
+            def _remove() -> None:
+                if update_callback in self._listeners:
+                    self._listeners.remove(update_callback)
+
+            return _remove
+
         def async_update_listeners(self) -> None:
-            pass
+            for listener in list(self._listeners):
+                listener()
 
         def async_set_updated_data(self, data) -> None:
             self.data = data

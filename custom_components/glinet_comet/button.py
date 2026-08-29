@@ -22,6 +22,7 @@ from .api import CometApiClient, CometError
 from .const import CONF_ENABLE_ATX, DEFAULT_ENABLE_ATX, DOMAIN
 from .coordinator import CometDataUpdateCoordinator
 from .entity import CometAtxEntity, CometEntity, CometGpioEntity
+from .gpio import async_setup_gpio_entities
 
 
 async def _press_reboot(client: CometApiClient) -> None:
@@ -103,16 +104,20 @@ async def async_setup_entry(
         else:
             entities.append(CometButton(coordinator, entry, description))
 
-    data = coordinator.data or {}
-    for channel, config in parsers.gpio_model_channels(data, "outputs").items():
-        if not isinstance(config, dict):
-            continue
-        pulse = config.get("pulse")
-        if config.get("switch") is not True and parsers.gpio_pulse_capable(pulse):
-            delay = parsers.gpio_pulse_delay(pulse)
-            entities.append(CometGpioPulseButton(coordinator, entry, channel, delay))
-
     async_add_entities(entities)
+
+    def _gpio_pulse_factory(channel: str, config: object) -> ButtonEntity | None:
+        if not isinstance(config, dict) or config.get("switch") is True:
+            return None
+        pulse = config.get("pulse")
+        if not parsers.gpio_pulse_capable(pulse):
+            return None
+        delay = parsers.gpio_pulse_delay(pulse)
+        return CometGpioPulseButton(coordinator, entry, channel, delay)
+
+    async_setup_gpio_entities(
+        entry, coordinator, async_add_entities, "outputs", _gpio_pulse_factory
+    )
 
 
 class _CometButtonMixin:

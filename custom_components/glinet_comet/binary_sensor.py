@@ -20,6 +20,7 @@ from . import parsers
 from .const import CONF_ENABLE_ATX, DEFAULT_ENABLE_ATX, DOMAIN
 from .coordinator import CometDataUpdateCoordinator
 from .entity import CometAtxEntity, CometEntity, CometGpioEntity
+from .gpio import async_setup_gpio_entities
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -90,11 +91,15 @@ async def async_setup_entry(
         else:
             entities.append(CometBinarySensor(coordinator, entry, description))
 
-    data = coordinator.data or {}
-    for channel in parsers.gpio_model_channels(data, "inputs"):
-        entities.append(CometGpioInputBinarySensor(coordinator, entry, channel))
-
     async_add_entities(entities)
+
+    async_setup_gpio_entities(
+        entry,
+        coordinator,
+        async_add_entities,
+        "inputs",
+        lambda channel, config: CometGpioInputBinarySensor(coordinator, entry, channel),
+    )
 
 
 class _CometBinarySensorMixin:
