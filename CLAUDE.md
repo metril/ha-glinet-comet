@@ -21,6 +21,15 @@ which runs `glkvm` — GL.iNet's fork of PiKVM's `kvmd`.
 - Subsystem merges are deep-merges (`_deep_merge`), never wholesale
   replacement, except `msd.storage` (a merge could never notice a removed
   image) and `gpio`/`gpio_model` on a full `GET /api/gpio`.
+- GPIO entities (v0.2.0): one `binary_sensor` per input channel, plus a
+  `switch` per output channel whose model has `switch: true` or a `button`
+  per output channel with a `pulse` config and no switch capability. Names
+  come from the device's GPIO view labels, falling back to a title-cased
+  channel id; entities are unavailable while the channel reports
+  `online: false`. No optimistic update — the device pushes `gpio` WS
+  frames. `api.py` gained `gpio_switch(channel, state)` /
+  `gpio_pulse(channel, delay)`; `parsers.py` gained `atx_hdd_active`,
+  `gpio_channel`, `gpio_model_channels`, `gpio_display_name`.
 
 ## Auth
 
@@ -152,7 +161,7 @@ any read/probe list without confirming safety from source first.
 | `atx/click` | 405 | `hid/print` | 405 |
 | `hid/events/send_shortcut` | 405 | `gpio/switch` | 405 |
 | `hid/set_params` | 405 | `upgrade/reboot` | **200 — reboots; NEVER_TOUCH, not probed again** |
-| `msd/set_connected` | 405 | | |
+| `msd/set_connected` | 405 | `gpio/pulse` | 405 |
 
 Snapshot: `GET /api/streamer/snapshot?allow_offline=1` → **200** JPEG
 (`ffd8ffe0` magic) in one run; **503** JSON error body in another, at the
@@ -164,4 +173,4 @@ always up; consumers must handle both. Login token was found at
 
 - Whether `atx` ever emits a WS event on this hardware (0/2 runs so far).
 - `custom_screen/status` with hardware present; `gpio.model.scheme` with real channels (both empty/absent on this unit).
-- Actual write behavior of `atx/click`, `hid/*`, `msd/set_connected`, `gpio/switch` (GET-probed only, per the read-only mandate — see NEVER_TOUCH above for why POST-probing isn't done at all).
+- Actual write behavior of `atx/click`, `hid/*`, `msd/set_connected`, `gpio/switch`/`gpio/pulse` (no GPIO channels configured on this unit; GET-probed only, per the read-only mandate — see NEVER_TOUCH above for why POST-probing isn't done at all).
