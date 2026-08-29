@@ -438,16 +438,20 @@ class CometApiClient:
                     url, ssl=self._ssl, heartbeat=30
                 )
             except aiohttp.WSServerHandshakeError as err:
+                # `from None`: err (and its request_info.real_url) embeds the
+                # wss:// URL, which carries auth_token=<token> in its query
+                # string. Chaining it would leak the token into any logged
+                # traceback. The messages below already carry err.status.
                 if err.status in _AUTH_FAILURE_STATUSES:
                     if attempt == 0:
                         await self._reauth(token)
                         continue
-                    raise CometAuthError("WebSocket authentication failed") from err
+                    raise CometAuthError("WebSocket authentication failed") from None
                 raise CometConnectionError(
                     f"WebSocket handshake failed: HTTP {err.status}"
-                ) from err
-            except asyncio.TimeoutError as err:
-                raise CometConnectionError("WebSocket connection timed out") from err
-            except aiohttp.ClientError as err:
-                raise CometConnectionError("WebSocket connection failed") from err
+                ) from None
+            except asyncio.TimeoutError:
+                raise CometConnectionError("WebSocket connection timed out") from None
+            except aiohttp.ClientError:
+                raise CometConnectionError("WebSocket connection failed") from None
         raise CometAuthError("WebSocket authentication failed")

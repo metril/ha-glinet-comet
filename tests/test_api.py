@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import traceback
 from urllib.parse import parse_qs, urlsplit
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -16,6 +17,7 @@ from custom_components.glinet_comet.api import (
     CometApiClient,
     CometApiError,
     CometAuthError,
+    CometConnectionError,
     CometRateLimitError,
 )
 
@@ -398,6 +400,63 @@ async def test_connect_ws_401_relogins_and_retries():
     assert ws is fake_ws
     assert session.ws_calls[0][0].endswith("auth_token=TOK1")
     assert session.ws_calls[1][0].endswith("auth_token=TOK2")
+
+
+def _ws_handshake_error(url: str, status: int) -> aiohttp.WSServerHandshakeError:
+    """Build a WSServerHandshakeError whose request_info.real_url carries the URL.
+
+    Mirrors real aiohttp: ClientResponseError.__str__ renders
+    ``url={self.request_info.real_url!r}``, so if a wss:// URL with
+    ``auth_token=<token>`` in its query string is ever chained via
+    ``raise ... from err``, the token leaks into any logged traceback.
+    """
+    request_info = aiohttp.RequestInfo(url=url, method="GET", headers={}, real_url=url)
+    return aiohttp.WSServerHandshakeError(
+        request_info=request_info, history=(), status=status, message="Unauthorized"
+    )
+
+
+@pytest.mark.asyncio
+async def test_connect_ws_auth_error_does_not_leak_token_via_traceback():
+    token = "SUPER-SECRET-WS-TOKEN"  # noqa: S105 - test fixture value, not a real secret
+    url = f"wss://10.0.0.5/api/ws?stream=0&auth_token={token}"
+    session = _FakeSession([_login_ok(token), _login_ok(token)])
+    session.queue_ws(_ws_handshake_error(url, 401))
+    session.queue_ws(_ws_handshake_error(url, 401))
+    client = _client(session)
+
+    with pytest.raises(CometAuthError) as exc_info:
+        await client.connect_ws()
+
+    exc = exc_info.value
+    assert exc.__cause__ is None
+    assert token not in str(exc)
+    assert token not in repr(exc)
+    full_traceback = "".join(
+        traceback.format_exception(type(exc), exc, exc.__traceback__)
+    )
+    assert token not in full_traceback
+
+
+@pytest.mark.asyncio
+async def test_connect_ws_non_auth_handshake_error_does_not_leak_token():
+    token = "SUPER-SECRET-WS-TOKEN"  # noqa: S105 - test fixture value, not a real secret
+    url = f"wss://10.0.0.5/api/ws?stream=0&auth_token={token}"
+    session = _FakeSession([_login_ok(token)])
+    session.queue_ws(_ws_handshake_error(url, 500))
+    client = _client(session)
+
+    with pytest.raises(CometConnectionError) as exc_info:
+        await client.connect_ws()
+
+    exc = exc_info.value
+    assert exc.__cause__ is None
+    assert token not in str(exc)
+    assert token not in repr(exc)
+    full_traceback = "".join(
+        traceback.format_exception(type(exc), exc, exc.__traceback__)
+    )
+    assert token not in full_traceback
 
 
 # --- test_connection ---
