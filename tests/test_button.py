@@ -59,11 +59,11 @@ class FakeHass:
 
 
 def make_pulse_button(
-    client: FakeClient, data: dict, channel: str = "out_pulse", delay: float = 0.5
+    client: FakeClient, data: dict, channel: str = "out_pulse"
 ) -> tuple[CometDataUpdateCoordinator, CometGpioPulseButton]:
     coord = CometDataUpdateCoordinator(FakeHass(), FakeEntry(), client)
     coord.data = data
-    entity = CometGpioPulseButton(coord, coord.entry, channel, delay)
+    entity = CometGpioPulseButton(coord, coord.entry, channel)
     return coord, entity
 
 
@@ -72,7 +72,7 @@ def test_gpio_pulse_button_shape():
     coord, entity = make_pulse_button(FakeClient(), data)
 
     assert entity._attr_unique_id == "test_entry_gpio_pulse_out_pulse"
-    assert entity._attr_name == "Out Pulse"
+    assert entity.name == "Out Pulse"
     assert entity.available is True
 
 
@@ -96,6 +96,28 @@ async def test_gpio_pulse_button_error_raises_home_assistant_error():
         await entity.async_press()
 
 
+@pytest.mark.asyncio
+async def test_gpio_pulse_button_uses_current_model_delay():
+    client = FakeClient()
+    coord, entity = make_pulse_button(client, _load_fixture("state_gpio.json"))
+    coord.data["gpio_model"]["outputs"]["out_pulse"]["pulse"]["delay"] = 2.5
+
+    await entity.async_press()
+
+    assert client.gpio_pulse_calls == [("out_pulse", 2.5)]
+
+
+@pytest.mark.asyncio
+async def test_gpio_pulse_button_delay_zero_when_channel_vanishes():
+    client = FakeClient()
+    coord, entity = make_pulse_button(client, _load_fixture("state_gpio.json"))
+    del coord.data["gpio_model"]["outputs"]["out_pulse"]
+
+    await entity.async_press()
+
+    assert client.gpio_pulse_calls == [("out_pulse", 0)]
+
+
 async def _setup(data: dict) -> list:
     coord = CometDataUpdateCoordinator(FakeHass(), FakeEntry(), FakeClient())
     coord.data = data
@@ -112,8 +134,7 @@ async def test_setup_entry_creates_exactly_one_pulse_button_from_gpio_fixture():
     pulse_buttons = [e for e in added if isinstance(e, CometGpioPulseButton)]
     assert len(pulse_buttons) == 1
     assert pulse_buttons[0]._channel == "out_pulse"
-    assert pulse_buttons[0]._attr_name == "Out Pulse"
-    assert pulse_buttons[0]._delay == 0.5
+    assert pulse_buttons[0].name == "Out Pulse"
 
 
 @pytest.mark.asyncio

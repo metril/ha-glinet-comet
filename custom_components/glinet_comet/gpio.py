@@ -87,13 +87,18 @@ def async_setup_gpio_entities(
     coordinator update thereafter.
 
     ``factory`` is called (and its result cached in ``added``) at most
-    once per channel id: a channel's entity is built from whatever
-    ``config`` looked like the first time that channel was seen, so a
-    later change to that channel's config on the device (e.g. its pulse
-    ``delay`` or its GPIO-view label) doesn't reach the already-created
-    entity until a reload -- the same freeze v0.2.0's setup-time-only loop
-    already had for every channel; this only extends it to channels seen
-    after setup instead of just the ones seen at setup.
+    once per channel id: which entity kind a channel gets -- switch vs.
+    pulse button, or skipped entirely (e.g. a ``pulse``-disabled output) --
+    is decided from whatever ``config`` looked like the first time that
+    channel was seen, so a later change to that *capability-affecting*
+    shape (``switch``/``pulse`` appearing or disappearing, ``max_delay``
+    going to zero, etc.) doesn't reach the already-created entity until a
+    reload -- the same freeze v0.2.0's setup-time-only loop already had for
+    every channel; this only extends it to channels seen after setup
+    instead of just the ones seen at setup. It does *not* freeze the
+    channel's label or (for a pulse button) its ``delay`` -- both are read
+    live from ``coordinator.data`` on every access/press, so a relabel or a
+    changed ``delay`` reaches the entity without a reload.
     """
     added: set[str] = set()
     last_model: Any = _UNSET

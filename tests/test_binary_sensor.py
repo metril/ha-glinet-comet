@@ -138,15 +138,26 @@ def test_gpio_input_binary_sensor_shape():
 
     in_1 = CometGpioInputBinarySensor(coord, coord.entry, "in_1")
     assert in_1._attr_unique_id == "test_entry_gpio_in_in_1"
-    assert in_1._attr_name == "Door Sensor"
+    assert in_1.name == "Door Sensor"
     assert in_1.is_on is True
     assert in_1.available is True
 
     in_2 = CometGpioInputBinarySensor(coord, coord.entry, "in_2")
     assert in_2._attr_unique_id == "test_entry_gpio_in_in_2"
-    assert in_2._attr_name == "In 2"
+    assert in_2.name == "In 2"
     assert in_2.is_on is False
     assert in_2.available is False
+
+
+def test_gpio_input_name_follows_relabel():
+    data = _load("state_gpio.json")
+    coord = make_coordinator(data)
+    entity = CometGpioInputBinarySensor(coord, coord.entry, "in_1")
+    assert entity.name == "Door Sensor"
+
+    coord.data["gpio_labels"]["in_1"] = "Back Door"
+
+    assert entity.name == "Back Door"
 
 
 @pytest.mark.asyncio

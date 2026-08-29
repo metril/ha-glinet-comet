@@ -112,8 +112,7 @@ async def async_setup_entry(
         pulse = config.get("pulse")
         if not parsers.gpio_pulse_capable(pulse):
             return None
-        delay = parsers.gpio_pulse_delay(pulse)
-        return CometGpioPulseButton(coordinator, entry, channel, delay)
+        return CometGpioPulseButton(coordinator, entry, channel)
 
     async_setup_gpio_entities(
         entry, coordinator, async_add_entities, "outputs", _gpio_pulse_factory
@@ -168,20 +167,20 @@ class CometGpioPulseButton(CometGpioEntity, ButtonEntity):
     _gpio_kind = "outputs"
     _gpio_id_kind = "pulse"
 
-    def __init__(
-        self,
-        coordinator: CometDataUpdateCoordinator,
-        entry: ConfigEntry,
-        channel: str,
-        delay: float,
-    ) -> None:
-        """Initialize the GPIO pulse button."""
-        super().__init__(coordinator, entry, channel)
-        self._delay = delay
-
     async def async_press(self) -> None:
-        """Pulse the GPIO output channel."""
+        """Pulse the GPIO output channel.
+
+        The pulse delay is read live from the current ``gpio_model`` (not
+        frozen at construction -- see ``gpio.py``'s module docstring), so a
+        changed ``delay`` on the device reaches the next press without a
+        reload; a vanished channel presses with ``delay=0``.
+        """
+        config = parsers.gpio_model_channels(
+            self.coordinator.data or {}, self._gpio_kind
+        ).get(self._channel)
+        pulse = config.get("pulse") if isinstance(config, dict) else None
+        delay = parsers.gpio_pulse_delay(pulse)
         try:
-            await self.coordinator.client.gpio_pulse(self._channel, self._delay)
+            await self.coordinator.client.gpio_pulse(self._channel, delay)
         except CometError as err:
             raise HomeAssistantError(str(err)) from err

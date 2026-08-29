@@ -80,8 +80,22 @@ class CometGpioEntity(CometEntity):
         self._attr_unique_id = (
             f"{entry.entry_id}_gpio_{self._gpio_id_kind}_{channel}"
         )
-        labels = (coordinator.data or {}).get("gpio_labels")
-        self._attr_name = parsers.gpio_display_name(channel, labels)
+
+    @property
+    def name(self) -> str:
+        """Return the channel's current display label.
+
+        Read live from ``coordinator.data["gpio_labels"]`` on every access
+        (a plain ``@property``, never ``cached_property``, and no
+        ``_attr_name`` is set -- either would freeze this), so a relabel on
+        the device updates ``friendly_name`` on the entity's next state
+        write. ``entity_id`` and the entity registry's ``original_name`` are
+        still fixed at registration time and only pick up a relabel on a
+        config entry reload.
+        """
+        return parsers.gpio_display_name(
+            self._channel, (self.coordinator.data or {}).get("gpio_labels")
+        )
 
     @property
     def _channel_state(self) -> dict[str, Any]:

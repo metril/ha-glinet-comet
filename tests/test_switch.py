@@ -182,7 +182,7 @@ def test_gpio_switch_shape():
     coord, entity = make_gpio_switch(FakeClient(), data)
 
     assert entity._attr_unique_id == "test_entry_gpio_out_out_switch"
-    assert entity._attr_name == "Relay 1"
+    assert entity.name == "Relay 1"
     assert entity.is_on is True
     assert entity.available is True
 
@@ -233,7 +233,7 @@ async def test_setup_entry_creates_exactly_one_gpio_switch_from_gpio_fixture():
     gpio_switches = [e for e in added if isinstance(e, CometGpioSwitch)]
     assert len(gpio_switches) == 1
     assert gpio_switches[0]._channel == "out_switch"
-    assert gpio_switches[0]._attr_name == "Relay 1"
+    assert gpio_switches[0].name == "Relay 1"
 
 
 @pytest.mark.asyncio
