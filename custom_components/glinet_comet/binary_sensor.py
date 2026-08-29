@@ -146,4 +146,4 @@ class CometGpioInputBinarySensor(CometGpioEntity, BinarySensorEntity):
     @property
     def is_on(self) -> bool | None:
         """Return the GPIO input state."""
-        return self._channel_state.get("state")
+        return self._channel_on

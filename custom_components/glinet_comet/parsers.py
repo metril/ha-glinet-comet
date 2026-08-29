@@ -374,6 +374,14 @@ def gpio_model_channels(data: dict[str, Any], kind: str) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def gpio_state(data: dict[str, Any], kind: str, channel: str) -> bool | None:
+    """Return a GPIO channel's live ``state``, coerced to a real bool.
+
+    ``None`` for a missing channel or a non-bool ``state`` value.
+    """
+    return _as_bool(gpio_channel(data, kind, channel).get("state"))
+
+
 def gpio_pulse_capable(config: Any) -> bool:
     """Return whether a channel's ``pulse`` config supports a pulse button.
 

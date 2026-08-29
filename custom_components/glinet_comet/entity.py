@@ -91,6 +91,13 @@ class CometGpioEntity(CometEntity):
         )
 
     @property
+    def _channel_on(self) -> bool | None:
+        """Return this GPIO channel's ``state``, coerced to a real bool."""
+        return parsers.gpio_state(
+            self.coordinator.data or {}, self._gpio_kind, self._channel
+        )
+
+    @property
     def available(self) -> bool:
         """Return True only if the coordinator is available and the channel is online."""
         return super().available and self._channel_state.get("online") is True

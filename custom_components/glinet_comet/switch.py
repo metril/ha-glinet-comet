@@ -216,7 +216,7 @@ class CometGpioSwitch(CometGpioEntity, SwitchEntity):
     @property
     def is_on(self) -> bool | None:
         """Return the GPIO output state."""
-        return self._channel_state.get("state")
+        return self._channel_on
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Switch the GPIO output on."""

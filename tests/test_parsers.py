@@ -735,6 +735,23 @@ def test_gpio_display_name_missing_labels_dict():
     assert parsers.gpio_display_name("out_none", None) == "Out None"
 
 
+def test_gpio_state_true(gpio):
+    assert parsers.gpio_state(gpio, "inputs", "in_1") is True
+
+
+def test_gpio_state_false(gpio):
+    assert parsers.gpio_state(gpio, "inputs", "in_2") is False
+
+
+def test_gpio_state_non_bool_value():
+    state = {"gpio": {"inputs": {"in_1": {"state": "on"}}}}
+    assert parsers.gpio_state(state, "inputs", "in_1") is None
+
+
+def test_gpio_state_missing_channel(gpio):
+    assert parsers.gpio_state(gpio, "inputs", "nope") is None
+
+
 def test_gpio_pulse_capable_missing_max_delay_is_capable():
     assert parsers.gpio_pulse_capable({"delay": 0.5}) is True
 
