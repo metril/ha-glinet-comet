@@ -352,6 +352,59 @@ async def test_reauth_logs_in_when_token_still_stale():
     assert len(session.requests) == 1
 
 
+# --- GPIO actions ---
+
+
+@pytest.mark.asyncio
+async def test_gpio_switch_sends_channel_and_state_on():
+    session = _FakeSession([_login_ok(), _ok({})])
+    client = _client(session)
+
+    await client.gpio_switch("out_switch", True)
+
+    method, url, _ = session.requests[-1]
+    assert method == "POST"
+    assert urlsplit(url).path == "/api/gpio/switch"
+    query = parse_qs(urlsplit(url).query)
+    assert query == {"channel": ["out_switch"], "state": ["1"]}
+
+
+@pytest.mark.asyncio
+async def test_gpio_switch_sends_state_off():
+    session = _FakeSession([_login_ok(), _ok({})])
+    client = _client(session)
+
+    await client.gpio_switch("out_switch", False)
+
+    query = parse_qs(urlsplit(session.requests[-1][1]).query)
+    assert query == {"channel": ["out_switch"], "state": ["0"]}
+
+
+@pytest.mark.asyncio
+async def test_gpio_pulse_sends_channel_and_default_delay():
+    session = _FakeSession([_login_ok(), _ok({})])
+    client = _client(session)
+
+    await client.gpio_pulse("out_pulse")
+
+    method, url, _ = session.requests[-1]
+    assert method == "POST"
+    assert urlsplit(url).path == "/api/gpio/pulse"
+    query = parse_qs(urlsplit(url).query)
+    assert query == {"channel": ["out_pulse"], "delay": ["0"]}
+
+
+@pytest.mark.asyncio
+async def test_gpio_pulse_sends_custom_delay():
+    session = _FakeSession([_login_ok(), _ok({})])
+    client = _client(session)
+
+    await client.gpio_pulse("out_pulse", delay=0.5)
+
+    query = parse_qs(urlsplit(session.requests[-1][1]).query)
+    assert query == {"channel": ["out_pulse"], "delay": ["0.5"]}
+
+
 # --- Upgrade actions ---
 
 

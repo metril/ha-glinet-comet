@@ -82,6 +82,7 @@ PROBE_PATHS = [
     "/api/msd/set_connected",
     "/api/hid/print",
     "/api/gpio/switch",
+    "/api/gpio/pulse",
 ]
 
 # Routes that execute a destructive action on GET (no method gating) —

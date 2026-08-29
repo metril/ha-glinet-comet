@@ -454,6 +454,19 @@ class CometApiClient:
         )
         await self._request("POST", f"/api/msd/set_params?{query}")
 
+    # --- GPIO actions ---
+
+    async def gpio_switch(self, channel: str, state: bool) -> None:
+        """Switch a GPIO output channel on or off."""
+        value = "1" if state else "0"
+        query = urlencode({"channel": channel, "state": value})
+        await self._request("POST", f"/api/gpio/switch?{query}")
+
+    async def gpio_pulse(self, channel: str, delay: float = 0) -> None:
+        """Pulse a GPIO output channel for ``delay`` seconds."""
+        query = urlencode({"channel": channel, "delay": delay})
+        await self._request("POST", f"/api/gpio/pulse?{query}")
+
     # --- Upgrade actions ---
 
     async def reboot(self) -> None:
