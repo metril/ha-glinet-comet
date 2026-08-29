@@ -415,25 +415,46 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _deep_merge(gpio.setdefault("outputs", {}), state["outputs"])
 
     def _process_gpio_full(self, event: dict[str, Any]) -> None:
-        """Replace GPIO model/state/labels from a full ``GET /api/gpio`` result."""
-        model = event.get("model") or {}
-        scheme = model.get("scheme") or {}
-        state = event.get("state") or {}
+        """Replace GPIO model/state/labels from a full ``GET /api/gpio`` result.
 
+        Every level is type-guarded: firmware sending the wrong type anywhere
+        in this shape (a list where a dict is expected, etc.) must not raise
+        -- that piece is just treated as empty, and the well-formed pieces
+        still land.
+        """
+        model = event.get("model")
+        if not isinstance(model, dict):
+            model = {}
+        scheme = model.get("scheme")
+        if not isinstance(scheme, dict):
+            scheme = {}
+        state = event.get("state")
+        if not isinstance(state, dict):
+            state = {}
+
+        scheme_inputs = scheme.get("inputs")
+        scheme_outputs = scheme.get("outputs")
         self._state["gpio_model"] = {
-            "inputs": scheme.get("inputs") or {},
-            "outputs": scheme.get("outputs") or {},
+            "inputs": scheme_inputs if isinstance(scheme_inputs, dict) else {},
+            "outputs": scheme_outputs if isinstance(scheme_outputs, dict) else {},
         }
+        state_inputs = state.get("inputs")
+        state_outputs = state.get("outputs")
         self._state["gpio"] = {
-            "inputs": state.get("inputs") or {},
-            "outputs": state.get("outputs") or {},
+            "inputs": state_inputs if isinstance(state_inputs, dict) else {},
+            "outputs": state_outputs if isinstance(state_outputs, dict) else {},
         }
 
         # Parse view.table for human-readable channel labels: each row can
         # carry a label cell plus one or more input/output channel cells, all
         # of which share that row's label.
         labels: dict[str, str] = {}
-        table = (model.get("view") or {}).get("table") or []
+        view = model.get("view")
+        if not isinstance(view, dict):
+            view = {}
+        table = view.get("table")
+        if not isinstance(table, list):
+            table = []
         for row in table:
             if not isinstance(row, list):
                 continue

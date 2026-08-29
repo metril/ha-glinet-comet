@@ -535,6 +535,62 @@ def test_gpio_event_merges_channels_without_dropping_others():
     assert coord._state["gpio"]["inputs"]["ch1"] == {"state": True}
 
 
+def test_process_gpio_full_handles_non_dict_model():
+    """A ``model`` that isn't a dict (e.g. a list) must not raise; treated as empty."""
+    coord = make_coordinator(FakeClient())
+
+    coord._process_gpio_full(
+        {
+            "model": [],
+            "state": {"inputs": {"in_1": {"online": True, "state": True}}, "outputs": {}},
+        }
+    )
+
+    assert coord._state["gpio_model"] == {"inputs": {}, "outputs": {}}
+    assert coord._state["gpio"]["inputs"]["in_1"] == {"online": True, "state": True}
+    assert coord._state["gpio_labels"] == {}
+
+
+def test_process_gpio_full_handles_non_dict_view():
+    """A ``model.view`` that isn't a dict (e.g. a string) must not raise labels."""
+    coord = make_coordinator(FakeClient())
+
+    coord._process_gpio_full(
+        {
+            "model": {
+                "scheme": {"inputs": {}, "outputs": {"out_1": {"switch": True}}},
+                "view": "x",
+            },
+            "state": {"inputs": {}, "outputs": {"out_1": {"online": True, "state": False}}},
+        }
+    )
+
+    assert coord._state["gpio_model"]["outputs"] == {"out_1": {"switch": True}}
+    assert coord._state["gpio"]["outputs"]["out_1"] == {"online": True, "state": False}
+    assert coord._state["gpio_labels"] == {}
+
+
+def test_process_gpio_full_handles_null_state_outputs():
+    """A ``state.outputs`` of ``null`` must not raise; treated as empty, inputs still land."""
+    coord = make_coordinator(FakeClient())
+
+    coord._process_gpio_full(
+        {
+            "model": {
+                "scheme": {"inputs": {"in_1": {}}, "outputs": {}},
+                "view": {"table": []},
+            },
+            "state": {"inputs": {"in_1": {"online": True, "state": True}}, "outputs": None},
+        }
+    )
+
+    assert coord._state["gpio"] == {
+        "inputs": {"in_1": {"online": True, "state": True}},
+        "outputs": {},
+    }
+    assert coord._state["gpio_model"]["inputs"] == {"in_1": {}}
+
+
 def test_unknown_event_type_is_ignored():
     coord = make_coordinator(FakeClient())
     coord.async_update_listeners = Mock()
