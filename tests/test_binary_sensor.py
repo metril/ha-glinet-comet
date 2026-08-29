@@ -91,8 +91,18 @@ def test_atx_hdd_activity_unavailable_when_atx_not_enabled():
     data = _load("state_gpio.json")
     data["atx"] = {"enabled": False, "leds": {"hdd": False, "power": False}}
     coord = make_coordinator(data)
+    coord._state["atx"] = {"enabled": False}
     entity = CometAtxBinarySensor(coord, coord.entry, _description("atx_hdd_activity"))
     assert entity.available is False
+
+
+def test_atx_hdd_activity_available_when_atx_enabled():
+    data = _load("state_gpio.json")
+    data["atx"] = {"enabled": True, "leds": {"hdd": False, "power": False}}
+    coord = make_coordinator(data)
+    coord._state["atx"] = {"enabled": True}
+    entity = CometAtxBinarySensor(coord, coord.entry, _description("atx_hdd_activity"))
+    assert entity.available is True
 
 
 def test_gpio_input_binary_sensor_shape():
