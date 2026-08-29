@@ -1,0 +1,44 @@
+type_text:
+  name: Type Text
+  description: Type a text string on the remote system via the Comet's virtual keyboard.
+  fields:
+    device_id:
+      name: Device
+      description: The GL.iNet Comet device to type on.
+      required: true
+      selector:
+        device:
+          integration: glinet_comet
+    text:
+      name: Text
+      description: The text to type.
+      required: true
+      selector:
+        text:
+          multiline: true
+    keymap:
+      name: Keymap
+      description: Keyboard layout to use when typing (e.g. en, de, fr). Defaults to en.
+      required: false
+      example: en
+      selector:
+        text:
+
+send_shortcut:
+  name: Send Keyboard Shortcut
+  description: Send a keyboard shortcut to the remote system via the Comet.
+  fields:
+    device_id:
+      name: Device
+      description: The GL.iNet Comet device to send the shortcut to.
+      required: true
+      selector:
+        device:
+          integration: glinet_comet
+    keys:
+      name: Keys
+      description: Comma-separated kvmd key names (e.g. ControlLeft,AltLeft,Delete).
+      required: true
+      example: "ControlLeft,AltLeft,Delete"
+      selector:
+        text:
