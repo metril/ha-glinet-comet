@@ -568,6 +568,175 @@ async def test_core_connection_error_raises_update_failed():
         await coord._async_update_data()
 
 
+# --- (c2) soft-core failure tier ----------------------------------------------
+#
+# A per-subsystem CometApiError on a core read (atx/info_system/hid/msd/
+# streamer) no longer fails the whole cycle: the subsystem just keeps its
+# last known state. Every test here runs one successful cycle first, since a
+# core failure on the *first-ever* cycle is still strict (CometEntity.__init__
+# snapshots device info from that first cycle).
+
+
+def _key_records(caplog, key: str):
+    return [
+        r
+        for r in caplog.records
+        if r.name.endswith("coordinator") and key in r.getMessage()
+    ]
+
+
+@pytest.mark.asyncio
+async def test_core_read_500_keeps_cycle_successful():
+    client = FakeClient()
+    coord = make_coordinator(client)
+    await coord._async_update_data()  # good cycle first
+
+    client.fail_always("get_msd", CometApiError("HTTP 500: boom", status=500))
+    state = await coord._async_update_data()
+
+    assert state["hid"]["connected"] is True
+    assert state["msd"]["drive"]["cdrom"] is True  # last known state kept
+
+
+@pytest.mark.asyncio
+async def test_core_read_500_warns_once_then_debug(caplog):
+    client = FakeClient()
+    coord = make_coordinator(client)
+    await coord._async_update_data()  # good cycle first
+
+    client.fail_always("get_msd", CometApiError("HTTP 500: boom", status=500))
+
+    with caplog.at_level(logging.DEBUG, logger="custom_components.glinet_comet.coordinator"):
+        await coord._async_update_data()  # cycle 2 -- first failure, warns
+    records = _key_records(caplog, "msd")
+    assert len(records) == 1
+    assert records[0].levelno == logging.WARNING
+    caplog.clear()
+
+    with caplog.at_level(logging.DEBUG, logger="custom_components.glinet_comet.coordinator"):
+        await coord._async_update_data()  # cycle 3 -- second consecutive failure, debug only
+    records = _key_records(caplog, "msd")
+    assert len(records) == 1
+    assert records[0].levelno == logging.DEBUG
+
+
+@pytest.mark.asyncio
+async def test_core_read_recovers_then_rewarns(caplog):
+    client = FakeClient()
+    coord = make_coordinator(client)
+    await coord._async_update_data()  # good cycle first
+
+    client.fail_always("get_msd", CometApiError("HTTP 500: boom", status=500))
+    await coord._async_update_data()  # cycle 2 -- fails, warns
+
+    client._raise_always.pop("get_msd")
+    applied: list[str] = []
+    original_apply_read = coord._apply_read
+
+    def spy_apply_read(key, result):
+        applied.append(key)
+        original_apply_read(key, result)
+
+    coord._apply_read = spy_apply_read
+    await coord._async_update_data()  # cycle 3 -- recovers, re-applied
+
+    assert "msd" in applied
+
+    caplog.clear()
+    client.fail_always("get_msd", CometApiError("HTTP 500: boom again", status=500))
+    with caplog.at_level(logging.DEBUG, logger="custom_components.glinet_comet.coordinator"):
+        await coord._async_update_data()  # cycle 4 -- fails again, warns again
+
+    records = _key_records(caplog, "msd")
+    assert len(records) == 1
+    assert records[0].levelno == logging.WARNING
+
+
+@pytest.mark.asyncio
+async def test_core_read_500_not_marked_unsupported():
+    client = FakeClient()
+    coord = make_coordinator(client)
+    await coord._async_update_data()  # good cycle first
+
+    client.fail_always("get_msd", CometApiError("HTTP 500: boom", status=500))
+    state = await coord._async_update_data()
+
+    assert "msd" not in state["unsupported"]
+    assert client.calls["get_msd"] == 2
+
+    state = await coord._async_update_data()
+
+    assert "msd" not in state["unsupported"]
+    assert client.calls["get_msd"] == 3  # retried every cycle, never skipped
+
+
+@pytest.mark.asyncio
+async def test_core_400_is_soft_not_unsupported():
+    client = FakeClient()
+    coord = make_coordinator(client)
+    await coord._async_update_data()  # good cycle first
+
+    client.fail_always("get_atx", CometApiError("ValidatorError: nope", status=400))
+    state = await coord._async_update_data()
+
+    assert "atx" not in state["unsupported"]
+    assert client.calls["get_atx"] == 2
+
+    await coord._async_update_data()
+
+    assert client.calls["get_atx"] == 3  # re-called next cycle, never skipped
+
+
+@pytest.mark.asyncio
+async def test_all_core_reads_failing_raises_update_failed():
+    client = FakeClient()
+    coord = make_coordinator(client)
+    await coord._async_update_data()  # good cycle first
+
+    for name in ("get_atx", "get_info_system", "get_hid", "get_msd", "get_streamer"):
+        client.fail_always(name, CometApiError("HTTP 500: boom", status=500))
+
+    with pytest.raises(UpdateFailed):
+        await coord._async_update_data()
+
+
+@pytest.mark.asyncio
+async def test_first_cycle_core_failure_raises_update_failed():
+    client = FakeClient()
+    client.fail_always("get_msd", CometApiError("HTTP 500: boom", status=500))
+    coord = make_coordinator(client)
+
+    with pytest.raises(UpdateFailed):
+        await coord._async_update_data()
+
+
+@pytest.mark.asyncio
+async def test_gpio_warn_reset_survives_a_raising_cycle(caplog):
+    client = FakeClient()
+    client.fail_always("get_gpio", CometApiError("HTTP 500: boom", status=500))
+    coord = make_coordinator(client)
+
+    with caplog.at_level(logging.DEBUG, logger="custom_components.glinet_comet.coordinator"):
+        await coord._async_update_data()  # cycle 1 -- gpio fails, warns
+    records = _gpio_records(caplog)
+    assert len(records) == 1
+    assert records[0].levelno == logging.WARNING
+    caplog.clear()
+
+    client._raise_always.pop("get_gpio")  # gpio recovers this cycle...
+    client.fail_always("get_atx", CometConnectionError("down"))  # ...but this is systemic
+    with pytest.raises(UpdateFailed):
+        await coord._async_update_data()  # cycle 2 -- raises; gpio's reset already happened
+
+    client._raise_always.pop("get_atx")
+    client.fail_always("get_gpio", CometApiError("HTTP 500: boom again", status=500))
+    with caplog.at_level(logging.DEBUG, logger="custom_components.glinet_comet.coordinator"):
+        await coord._async_update_data()  # cycle 3 -- gpio fails again, warns (not debug)
+    records = _gpio_records(caplog)
+    assert len(records) == 1
+    assert records[0].levelno == logging.WARNING
+
+
 # --- (d) WS message merge handlers -------------------------------------------
 
 

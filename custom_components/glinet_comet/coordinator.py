@@ -13,6 +13,20 @@ slow-tier poll is the only path by which ``gpio_model`` is ever
 reassigned; ``_process_gpio_full`` re-derives
 ``gpio``/``gpio_model``/``gpio_labels`` from scratch on every successful
 read.
+
+Failure tiers: systemic failures (auth/rate-limit/connection) always fail
+the whole cycle, regardless of which read hit them. A per-subsystem
+``CometApiError`` on a *core* read (``atx``, ``info_system``, ``hid``,
+``msd``, ``streamer``) is soft -- that subsystem just keeps its last known
+state, a warn-once/then-debug message is logged, and the cycle still
+succeeds -- unless every core read failed in the same cycle (nothing left
+to report) or this is the first-ever cycle, which stays strict because
+``CometEntity.__init__`` snapshots device serial/model/sw_version from it.
+Core reads are never added to ``unsupported``: that list means "skip
+forever", which a core read must not do. Optional reads keep the older,
+simpler rule: a 400/404 marks the field ``unsupported`` (skipped on later
+cycles), any other status is retried next cycle. ``_read_warned`` tracks
+warn-once state across both tiers, keyed by read name.
 """
 
 from __future__ import annotations
@@ -87,7 +101,8 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         self._ws: aiohttp.ClientWebSocketResponse | None = None
         self._ws_task: asyncio.Task[None] | None = None
-        self._gpio_read_warned = False
+        self._read_warned: set[str] = set()
+        self._had_successful_cycle = False
         self._ws_has_connected_once = False
         self._last_upgrade_compare: float | None = None
         self._state: dict[str, Any] = {
@@ -125,6 +140,19 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return bool(self._state.get("ws_connected"))
 
     # --- Slow HTTP poll tier -------------------------------------------------
+
+    def _log_read_failure(self, key: str, err: CometApiError) -> None:
+        """Log one soft-failed read: WARNING the first time, DEBUG on repeats.
+
+        Repeats are downgraded to debug so a flapping subsystem doesn't spam
+        the log every cycle. ``_read_warned`` is cleared for ``key`` as soon
+        as a read for it succeeds again (see the reset in
+        ``_async_update_data``), so a *new* outage always warns once more.
+        """
+        first_time = key not in self._read_warned
+        self._read_warned.add(key)
+        log = _LOGGER.warning if first_time else _LOGGER.debug
+        log("%s read failed (HTTP %s); keeping last known state", key, err.status)
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Poll the slow HTTP tier for every WS-unreliable/WS-only subsystem."""
@@ -172,6 +200,12 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         by_key = dict(zip(keys, results))
 
+        # Reset before any raise, so a recovery isn't lost to an unrelated
+        # failure in the same cycle.
+        self._read_warned -= {
+            k for k, v in by_key.items() if not isinstance(v, BaseException)
+        }
+
         # Systemic failures (auth/rate-limit/connection) take priority over
         # any single optional-field failure, regardless of which read hit them.
         for result in by_key.values():
@@ -185,10 +219,28 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         for result in by_key.values():
             if isinstance(result, CometConnectionError):
                 raise UpdateFailed(str(result)) from result
-        for key in core:
-            result = by_key[key]
-            if isinstance(result, CometApiError):
-                raise UpdateFailed(f"{key}: {result}") from result
+
+        # A per-subsystem CometApiError on a core read is soft: keep that
+        # subsystem's last state and let the cycle succeed, UNLESS every
+        # core read failed, or this is the first-ever cycle (CometEntity
+        # snapshots device serial/model/sw_version from it, so it must stay
+        # strict). Core reads are never marked `unsupported` -- that means
+        # "skip forever", which a core read must not do.
+        core_failures = {
+            key: by_key[key] for key in core if isinstance(by_key[key], CometApiError)
+        }
+        if core_failures:
+            first_key = next(iter(core_failures))
+            first_err = core_failures[first_key]
+            if not self._had_successful_cycle:
+                raise UpdateFailed(f"{first_key}: {first_err}") from first_err
+            if len(core_failures) == len(core):
+                raise UpdateFailed(
+                    f"all core reads failed; {first_key}: {first_err}"
+                ) from first_err
+            for key, err in core_failures.items():
+                self._log_read_failure(key, err)
+
         for key in optional:
             result = by_key[key]
             if isinstance(result, CometApiError):
@@ -202,37 +254,13 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 else:
                     # A transient failure (5xx, ok:false, unparseable body):
                     # don't give up on this field forever, just retry it
-                    # next cycle. gpio flap (a WS-only device dropping its
-                    # GPIO daemon momentarily, etc.) is warned once and then
-                    # downgraded to debug until a read actually succeeds
-                    # again, so a flapping subsystem doesn't spam the log
-                    # every cycle -- see ``_gpio_read_warned`` below.
-                    if key == "gpio" and not self._gpio_read_warned:
-                        log = _LOGGER.warning
-                        self._gpio_read_warned = True
-                    else:
-                        log = _LOGGER.debug
-                    log(
-                        "%s read failed (HTTP %s); will retry next cycle",
-                        key,
-                        result.status,
-                    )
+                    # next cycle.
+                    self._log_read_failure(key, result)
 
         for key, result in by_key.items():
             if isinstance(result, BaseException):
                 continue
             self._apply_read(key, result)
-
-        # Note: a cycle that raises early (a core-read failure, auth,
-        # rate-limit) never reaches this line, so `_gpio_read_warned` is
-        # neither set nor reset by it -- if gpio itself would have recovered
-        # on that same cycle, the flag stays True and the *next* new gpio
-        # outage logs at DEBUG instead of WARNING. Accepted as
-        # under-warning rather than risking log spam; it never suppresses a
-        # WARNING for an outage that's still ongoing when a read finally
-        # does complete.
-        if "gpio" in by_key and not isinstance(by_key["gpio"], BaseException):
-            self._gpio_read_warned = False
 
         if (
             due_compare
@@ -241,6 +269,7 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         ):
             self._last_upgrade_compare = now
 
+        self._had_successful_cycle = True
         return dict(self._state)
 
     def _apply_read(self, key: str, result: dict[str, Any]) -> None:
