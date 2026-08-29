@@ -5,28 +5,87 @@ which runs `glkvm` — GL.iNet's fork of PiKVM's `kvmd`.
 
 ## Architecture
 
-WebSocket push (`/api/ws`) drives fast state; a slow HTTP-poll tier covers
-info/version/network reads the socket doesn't carry. Auth is a bearer token
-from `/api/auth/login`, with a TOTP code appended to the password when 2FA
-is enabled.
+- `api.py`: HTTP + WebSocket client. `coordinator.py`:
+  `CometDataUpdateCoordinator` combines a WebSocket push tier (fast state)
+  with a slow HTTP-poll tier (`update_interval`, default 300s via
+  `CONF_SCAN_INTERVAL`) for reads the socket doesn't carry (hostname,
+  network, firmware/upgrade info; `atx` is also polled here — see Gotchas).
+- State schema (`coordinator._state`): `atx`, `hid`, `msd`, `streamer`,
+  `gpio`, `gpio_model`, `gpio_labels`, `info`, `glinet` (hostname/network/
+  upgrade_*), `unsupported` (fields the firmware 400'd on, skipped on later
+  cycles), `ws_connected`.
+- WS-pushed state is applied via `self.data = dict(self._state)` +
+  `self.async_update_listeners()` (`_push_state`) — **not**
+  `async_set_updated_data`, which reschedules `update_interval` on every
+  call and would starve the slow HTTP tier if called per WS frame.
+- Subsystem merges are deep-merges (`_deep_merge`), never wholesale
+  replacement, except `msd.storage` (a merge could never notice a removed
+  image) and `gpio`/`gpio_model` on a full `GET /api/gpio`.
 
-## Auth contract
+## Auth
 
-- `POST /api/auth/login`, form-encoded (`data={...}`): `user`, `passwd`,
-  `expire=0`. When a `totp_secret` is configured: `passwd = password +
-  pyotp.TOTP(secret).now()` (code appended, no separator).
-- Success: HTTP 200 JSON `{"ok": true, "result": {"token": "..."}}` — token
-  may also appear top-level; check both.
-- `403` = password/TOTP rejected. **Do not retry** — the device locks out
-  after 10 failures / 600s. `429` = rate-limited, body carries
-  `remaining_time`. A `two_step_required` field means two-step device
-  approval is enabled (separate from TOTP).
-- Authenticated requests: header `Token: <token>`, plus cookie
-  `auth_token=<token>` for safety. WebSocket:
-  `wss://<host>/api/ws?stream=0&auth_token=<token>`.
-- Self-signed cert: aiohttp `ssl=False`.
-- Every kvmd response is `{"ok": bool, "result": {...}}`.
-- `POST /api/auth/logout` is the only other permitted POST.
+- `POST /api/auth/login` once, form-encoded: `user`, `passwd`, `expire=0`.
+  When `totp_secret` is configured, `passwd = password +
+  pyotp.TOTP(secret).now()` (appended, no separator, fresh every call).
+  Token read from `result.token` (top-level `token` also checked).
+  Self-signed cert: aiohttp `ssl=False` unless `verify_ssl` is set.
+- Authenticated HTTP requests send header `Token: <token>`. WebSocket:
+  `wss://<host>/api/ws?stream=<0|1>&auth_token=<token>` — `stream=1` is the
+  default (`keep_video_active` option), since kvmd only keeps its video
+  pipeline running while a `stream=1` client is connected.
+- On `401`/`403` (HTTP or WS handshake), re-login **once** and retry; a
+  second failure raises `CometAuthError` → `ConfigEntryAuthFailed` (HA
+  reauth). `429` raises `CometRateLimitError(remaining_time)` →
+  `UpdateFailed`; the WS loop sleeps `remaining_time` before reconnecting.
+- **Never loop on login failure.** The device locks logins for 10 minutes
+  after 10 failures, every extra attempt counts toward that —
+  `async_login()` and `tools/dump_api.py`'s `login()` are single-shot by
+  design; don't add a retry loop around either.
+- `.comet_pass` (dev tool only, gitignored) values may be wrapped in one
+  matching pair of quotes (`user: "admin"`); `_unquote()` strips exactly
+  one such pair, no more.
+
+## Gotchas learned
+
+- `info?fields=hw` and `info?fields=health` both 400 on V1.9.1 — this
+  firmware exposes no CPU/mem/temp/network metrics at all; don't
+  reintroduce those sensors without re-verifying on other firmware.
+- `streamer.streamer` can be `null` and the snapshot endpoint can 503 when
+  no one has an active video viewer — always null-check / JPEG-magic-check
+  (`\xff\xd8`, see `get_snapshot`) rather than assuming a shape.
+- No `atx` WebSocket event was ever observed (0/2 live captures), unlike
+  other absent/disabled features (`fingerbot`, `ocr`) which still pushed a
+  status once — hence `atx` is polled on the slow HTTP tier as a fallback
+  instead of relying on WS push alone.
+- ATX write routes (`atx/click`, `atx/power`) return HTTP 500 with a
+  plain-text body (not the usual JSON envelope) when no ATX board is
+  attached — handled as a generic `CometApiError`, not JSON-parsed.
+- `/api/upgrade/reboot` and `/api/upgrade/reset_default` are **GET**
+  handlers in glkvm that execute for real on GET, with no method gating.
+  Never probe them; `tools/dump_api.py` hard-refuses them via
+  `NEVER_TOUCH` regardless of flags. `api.py`'s `reboot()` uses GET
+  deliberately (POST 405s there) — it's only ever invoked by the user
+  pressing the Reboot button.
+
+## Conventions
+
+- GitHub identity: `metril`. Commit messages are plain, imperative,
+  present-tense summaries ("Add X", "Fix Y") — no AI/assistant mentions, no
+  Co-Authored-By trailers.
+- Dev tooling via `uv` (`uv venv`, `uv run pytest -q`,
+  `uv run python tools/dump_api.py`).
+- `api.py` is a clean-room implementation against the documented kvmd-style
+  contract (endpoints/shapes only) — no code copied from GL.iNet's GPL
+  `glkvm`/`glkvm-comet` sources; this integration itself ships under MIT.
+- Tests run offline against fixtures/stubs in `tests/` (no device, no real
+  Home Assistant). CI's `import-smoke` job is the only place platform
+  modules are imported against a real `homeassistant` package.
+
+## Release process
+
+Bump `manifest.json`'s `version` in the commit that ships the release, tag
+`vX.Y.Z` to match, and cut a GitHub release — `release.yml` re-derives the
+version from the tag and zips `custom_components/glinet_comet` as the asset.
 
 ## Verified shapes (live, 2026-08-29, fw V1.9.1 release1)
 

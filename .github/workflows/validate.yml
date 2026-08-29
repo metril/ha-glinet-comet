@@ -1,0 +1,95 @@
+name: Validate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    - cron: "0 0 * * *"
+
+jobs:
+  validate-hacs:
+    runs-on: ubuntu-latest
+    name: HACS Validation
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hacs/action@main
+        with:
+          category: integration
+
+  validate-hassfest:
+    runs-on: ubuntu-latest
+    name: Hassfest Validation
+    steps:
+      - uses: actions/checkout@v4
+      - uses: home-assistant/actions/hassfest@master
+
+  tests:
+    runs-on: ubuntu-latest
+    name: Unit tests
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pytest pytest-asyncio aiohttp pyotp
+      - run: pytest -q
+
+  import-smoke:
+    runs-on: ubuntu-latest
+    name: Platform import smoke test
+    # hassfest validates the manifest but does NOT import the platform modules,
+    # so a bad `from homeassistant...` import slips through. Import every platform
+    # against a real Home Assistant to catch it.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install homeassistant pyotp numpy PyTurboJPEG av
+      - name: Import all platform modules
+        run: |
+          python - <<'PY'
+          import importlib, sys
+          sys.path.insert(0, ".")
+          mods = [
+              "custom_components.glinet_comet",
+              "custom_components.glinet_comet.binary_sensor",
+              "custom_components.glinet_comet.sensor",
+              "custom_components.glinet_comet.switch",
+              "custom_components.glinet_comet.button",
+              "custom_components.glinet_comet.select",
+              "custom_components.glinet_comet.camera",
+              "custom_components.glinet_comet.update",
+              "custom_components.glinet_comet.services",
+              "custom_components.glinet_comet.config_flow",
+              "custom_components.glinet_comet.diagnostics",
+          ]
+          failed = False
+          loaded = {}
+          for m in mods:
+              try:
+                  loaded[m] = importlib.import_module(m)
+                  print(f"OK   {m}")
+              except Exception as e:  # noqa: BLE001
+                  failed = True
+                  print(f"FAIL {m}: {type(e).__name__}: {e}")
+
+          # Any description tuple assigned to entity.entity_description MUST subclass
+          # EntityDescription, or HA crashes reading entity.name -> device_class.
+          from homeassistant.helpers.entity import EntityDescription
+          for m, attr in (
+              ("custom_components.glinet_comet.binary_sensor", "BINARY_SENSORS"),
+              ("custom_components.glinet_comet.sensor", "SENSORS"),
+              ("custom_components.glinet_comet.switch", "SWITCHES"),
+              ("custom_components.glinet_comet.button", "BUTTONS"),
+          ):
+              mod = loaded.get(m)
+              for desc in getattr(mod, attr, ()) if mod else ():
+                  if not isinstance(desc, EntityDescription):
+                      failed = True
+                      print(f"FAIL {m}.{attr}: {desc!r} is not an EntityDescription")
+          sys.exit(1 if failed else 0)
+          PY
