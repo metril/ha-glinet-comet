@@ -60,6 +60,13 @@ BINARY_SENSORS: tuple[CometBinarySensorDescription, ...] = (
         entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=parsers.mouse_online,
     ),
+    CometBinarySensorDescription(
+        key="atx_hdd_activity",
+        name="ATX HDD Activity",
+        device_class=BinarySensorDeviceClass.RUNNING,
+        value_fn=parsers.atx_hdd_active,
+        requires_atx=True,
+    ),
 )
 
 
@@ -82,6 +89,11 @@ async def async_setup_entry(
             entities.append(CometAtxBinarySensor(coordinator, entry, description))
         else:
             entities.append(CometBinarySensor(coordinator, entry, description))
+
+    data = coordinator.data or {}
+    for channel in parsers.gpio_model_channels(data, "inputs"):
+        entities.append(CometGpioInputBinarySensor(coordinator, entry, channel))
+
     async_add_entities(entities)
 
 
@@ -119,3 +131,41 @@ class CometAtxBinarySensor(_CometBinarySensorMixin, CometAtxEntity, BinarySensor
     Unavailable (in addition to the usual coordinator-unavailable case)
     whenever the device reports no ATX board attached.
     """
+
+
+class CometGpioInputBinarySensor(CometEntity, BinarySensorEntity):
+    """A GPIO input channel exposed as a binary sensor.
+
+    No optimistic update -- the device pushes ``gpio`` WebSocket frames.
+    """
+
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(
+        self,
+        coordinator: CometDataUpdateCoordinator,
+        entry: ConfigEntry,
+        channel: str,
+    ) -> None:
+        """Initialize the GPIO input binary sensor."""
+        super().__init__(coordinator, entry)
+        self._channel = channel
+        self._attr_unique_id = f"{entry.entry_id}_gpio_in_{channel}"
+        labels = (coordinator.data or {}).get("gpio_labels")
+        self._attr_name = parsers.gpio_display_name(channel, labels)
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return the GPIO input state."""
+        if self.coordinator.data is None:
+            return None
+        channel = parsers.gpio_channel(self.coordinator.data, "inputs", self._channel)
+        return channel.get("state")
+
+    @property
+    def available(self) -> bool:
+        """Return True only if the coordinator is available and the channel is online."""
+        if not super().available or self.coordinator.data is None:
+            return False
+        channel = parsers.gpio_channel(self.coordinator.data, "inputs", self._channel)
+        return channel.get("online") is True
