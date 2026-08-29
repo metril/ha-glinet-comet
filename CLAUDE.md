@@ -25,8 +25,8 @@ which runs `glkvm` — GL.iNet's fork of PiKVM's `kvmd`.
   `switch` per output channel whose model has `switch: true` or a `button`
   per output channel with a `pulse` config and no switch capability. Names
   come from the device's GPIO view labels, falling back to a title-cased
-  channel id; entities are unavailable while the channel reports
-  `online: false`. No optimistic update — the device pushes `gpio` WS
+  channel id; entities are unavailable unless the channel reports
+  `online: true`. No optimistic update — the device pushes `gpio` WS
   frames. `api.py` gained `gpio_switch(channel, state)` /
   `gpio_pulse(channel, delay)`; `parsers.py` gained `atx_hdd_active`,
   `gpio_channel`, `gpio_model_channels`, `gpio_display_name`.
@@ -154,7 +154,7 @@ to request them, independent of `--probe-writes` or the `READS`/
 any read/probe list without confirming safety from source first.
 
 `--probe-writes` (GET only, never POST) — from the run before the
-`upgrade/reboot` incident:
+`upgrade/reboot` incident (`gpio/pulse` is from the later 2026-08-29 run):
 
 | route | status | route | status |
 |---|---|---|---|
