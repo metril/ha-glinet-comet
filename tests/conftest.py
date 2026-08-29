@@ -182,12 +182,18 @@ def _stub_homeassistant() -> None:
         AddEntitiesCallback=object,
     )
 
+    class _Entity:
+        pass
+
+    ha_entity = _mod("homeassistant.helpers.entity", Entity=_Entity)
+
     ha_helpers.update_coordinator = ha_uc
     ha_helpers.aiohttp_client = ha_ac
     ha_helpers.config_validation = ha_cv
     ha_helpers.device_registry = ha_dr
     ha_helpers.event = ha_evt
     ha_helpers.entity_platform = ha_ep
+    ha_helpers.entity = ha_entity
 
     # --- homeassistant.components.* (only the bits switch/select/diagnostics use) --
 
@@ -295,6 +301,7 @@ def _stub_homeassistant() -> None:
         "homeassistant.helpers.device_registry": ha_dr,
         "homeassistant.helpers.event": ha_evt,
         "homeassistant.helpers.entity_platform": ha_ep,
+        "homeassistant.helpers.entity": ha_entity,
         "homeassistant.components": ha_components,
         "homeassistant.components.select": ha_comp_select,
         "homeassistant.components.switch": ha_comp_switch,

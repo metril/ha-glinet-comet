@@ -7,10 +7,12 @@ over the WebSocket event stream (``/api/ws``); a slow HTTP-poll tier
 ``streamer`` every cycle as a fallback source of truth -- MSD writes in
 particular push nothing back over the WebSocket, so those subsystems can't
 rely on WS push alone. ``gpio`` is polled every cycle too, just like
-``atx`` -- no WS ``gpio`` event has ever carried a full model, so this poll
-is the only source of new/changed channels; ``_process_gpio_full``
-re-derives ``gpio``/``gpio_model``/``gpio_labels`` from scratch on every
-successful read.
+``atx``: ``_process_gpio_event`` deliberately merges only channel *state*
+from a WS ``gpio`` frame and ignores any ``model`` it carries, so this
+slow-tier poll is the only path by which ``gpio_model`` is ever
+reassigned; ``_process_gpio_full`` re-derives
+``gpio``/``gpio_model``/``gpio_labels`` from scratch on every successful
+read.
 """
 
 from __future__ import annotations
@@ -125,7 +127,7 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     # --- Slow HTTP poll tier -------------------------------------------------
 
     async def _async_update_data(self) -> dict[str, Any]:
-        """Poll the slow HTTP tier; bootstrap WS-only subsystems as needed."""
+        """Poll the slow HTTP tier for every WS-unreliable/WS-only subsystem."""
         unsupported: list[str] = self._state["unsupported"]
 
         core: dict[str, Any] = {
@@ -221,6 +223,14 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 continue
             self._apply_read(key, result)
 
+        # Note: a cycle that raises early (a core-read failure, auth,
+        # rate-limit) never reaches this line, so `_gpio_read_warned` is
+        # neither set nor reset by it -- if gpio itself would have recovered
+        # on that same cycle, the flag stays True and the *next* new gpio
+        # outage logs at DEBUG instead of WARNING. Accepted as
+        # under-warning rather than risking log spam; it never suppresses a
+        # WARNING for an outage that's still ongoing when a read finally
+        # does complete.
         if "gpio" in by_key and not isinstance(by_key["gpio"], BaseException):
             self._gpio_read_warned = False
 

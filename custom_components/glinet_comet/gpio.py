@@ -16,14 +16,16 @@ Dedup / identity guard
 -----------------------
 ``_process_gpio_full`` replaces ``gpio_model`` wholesale on every
 successful GPIO read (never merges it), so a fresh dict object shows up on
-the coordinator on every read whether or not the model actually changed.
-Comparing ``gpio_model is last_model`` (object identity, not equality) lets
-the per-WS-frame listener skip the channel scan below with a single cheap
-``is`` compare on the overwhelming majority of frames -- WS ``gpio`` frames
-only ever carry live channel *state*, never a new model, so `gpio_model`
-is a different object only right after an HTTP gpio poll actually landed
-(or a first read). A fresh-but-equal ``gpio_model`` dict (e.g. two
-back-to-back GETs of an unchanged config) still triggers one scan -- the
+the coordinator every time that read succeeds, whether or not the model
+actually changed. Comparing ``gpio_model is last_model`` (object identity,
+not equality) lets the per-WS-frame listener skip the channel scan below
+with a single cheap ``is`` compare on the overwhelming majority of frames:
+``_process_gpio_event`` (the WS ``gpio`` handler) deliberately merges only
+channel *state* from the frame and ignores any ``model`` section it
+carries, so `gpio_model` only ever becomes a new object right after an
+HTTP gpio poll actually lands (or on the first read) -- never from a plain
+WS state push. A fresh-but-equal ``gpio_model`` dict (e.g. two back-to-back
+GETs of an unchanged config) still triggers one scan -- the
 ``added: set[str]`` of channel ids already handed to ``async_add_entities``
 is what actually prevents a duplicate entity in that case.
 
@@ -39,6 +41,18 @@ would enumerate ``entity_registry.async_get(hass)`` entries for this
 is confirmed gone by a *successful* gpio read -- never gated on a
 failed/retried one, which would remove entities for channels that are
 still there but just transiently unreadable. Not built here.
+
+Listener lifetime
+------------------
+Each call registers one permanent listener via
+``coordinator.async_add_listener`` (removed only on unload via
+``entry.async_on_unload``), so real HA's ``DataUpdateCoordinator`` keeps
+``update_interval`` scheduled for the config entry's entire lifetime --
+it only stops scheduling once the *last* listener goes. That's harmless
+here: the coordinator's WS loop (``async_start``) runs independently of
+whether anything is listening, and the slow-tier poll needs to keep
+running anyway for atx/hid/msd/streamer/gpio, so this doesn't change
+actual polling behavior.
 """
 
 from __future__ import annotations
@@ -48,6 +62,7 @@ from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import callback
+from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import parsers
@@ -61,7 +76,7 @@ def async_setup_gpio_entities(
     coordinator: CometDataUpdateCoordinator,
     async_add_entities: AddEntitiesCallback,
     kind: str,
-    factory: Callable[[str, Any], Any | None],
+    factory: Callable[[str, Any], Entity | None],
 ) -> None:
     """Add GPIO entities for ``kind`` (``"inputs"``/``"outputs"``) as they appear.
 
@@ -70,6 +85,15 @@ def async_setup_gpio_entities(
     by the switch platform's factory). Runs once synchronously (for
     whatever channels already exist at setup time), then again on every
     coordinator update thereafter.
+
+    ``factory`` is called (and its result cached in ``added``) at most
+    once per channel id: a channel's entity is built from whatever
+    ``config`` looked like the first time that channel was seen, so a
+    later change to that channel's config on the device (e.g. its pulse
+    ``delay`` or its GPIO-view label) doesn't reach the already-created
+    entity until a reload -- the same freeze v0.2.0's setup-time-only loop
+    already had for every channel; this only extends it to channels seen
+    after setup instead of just the ones seen at setup.
     """
     added: set[str] = set()
     last_model: Any = _UNSET
@@ -83,7 +107,7 @@ def async_setup_gpio_entities(
             return
         last_model = model
 
-        new: list[Any] = []
+        new: list[Entity] = []
         for channel, config in parsers.gpio_model_channels(data, kind).items():
             if channel in added:
                 continue
