@@ -12,7 +12,8 @@ printed, logged, or written to the dump.
 
 Usage:
 
-    uv run python tools/dump_api.py [--host 10.10.77.131] [--probe-writes]
+    uv run python tools/dump_api.py --host <device-ip-or-hostname> [--probe-writes]
+    # or: COMET_HOST=<device-ip-or-hostname> uv run python tools/dump_api.py
 
 Writes redacted JSON to ``comet_api_dump.json`` in the current directory.
 """
@@ -33,7 +34,6 @@ import pyotp
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_PASS_FILE = os.path.join(HERE, "..", ".comet_pass")
-DEFAULT_HOST = "10.10.77.131"
 
 # GET routes to dump: (label, path).
 READS = [
@@ -66,19 +66,23 @@ PROBE_PATHS = [
 
 # --- Redaction -------------------------------------------------------------
 
-# Plain case-insensitive substring match for most sensitive terms.
-_SENSITIVE_SUBSTR = re.compile(
-    r"(serial|token|passwd|password|mac|ip|address|host|ssid|secret|email|imei|uuid)",
-    re.IGNORECASE,
-)
-# "key" needs a word/underscore boundary so "keyboard"/"keymap" survive.
-_SENSITIVE_KEY_WORD = re.compile(r"(?:^|_)key(?:_|$)", re.IGNORECASE)
+# Whole-segment match only: a key is split on separators and each segment is
+# compared for exact equality against this set. This is deliberately NOT a
+# substring match — "description"/"chip"/"machine"/"script"/"clipboard"/
+# "keyboard"/"keymap"/"platform" must survive untouched even though they
+# contain "ip"/"mac"/"key" as substrings. "hostname" doesn't split into a
+# "host" segment on its own, so it's listed explicitly.
+_SENSITIVE_TERMS = {
+    "serial", "token", "passwd", "password", "mac", "ip", "address",
+    "host", "hostname", "ssid", "key", "secret", "email", "imei", "uuid",
+}
+_SEGMENT_SPLIT_RE = re.compile(r"[_.\-]")
 IPV4_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
 
 
 def _is_sensitive_key(key: str) -> bool:
-    key = str(key)
-    return bool(_SENSITIVE_SUBSTR.search(key) or _SENSITIVE_KEY_WORD.search(key))
+    segments = _SEGMENT_SPLIT_RE.split(str(key).lower())
+    return any(seg in _SENSITIVE_TERMS for seg in segments)
 
 
 def redact(obj, token: str | None = None):
@@ -155,7 +159,10 @@ async def login(session: aiohttp.ClientSession, host: str, user: str, password: 
     url = f"https://{host}/api/auth/login"
     try:
         async with session.post(
-            url, data={"user": user, "passwd": passwd, "expire": "0"}, ssl=ssl_param
+            url,
+            data={"user": user, "passwd": passwd, "expire": "0"},
+            ssl=ssl_param,
+            allow_redirects=False,
         ) as resp:
             status = resp.status
             text_body = await resp.text()
@@ -393,7 +400,6 @@ async def run(host: str, user: str, password: str, totp_secret: str, ssl_param,
     timeout = aiohttp.ClientTimeout(total=15)
     async with aiohttp.ClientSession(timeout=timeout) as session:
         token, token_location = await login(session, host, user, password, totp_secret, ssl_param)
-        dump["meta"]["token_location"] = token_location
         try:
             for label, path in READS:
                 dump["reads"][label] = await api_get(session, host, path, token, ssl_param)
@@ -407,12 +413,21 @@ async def run(host: str, user: str, password: str, totp_secret: str, ssl_param,
         finally:
             await logout(session, host, token, ssl_param)
 
-    return redact(dump, token)
+    redacted = redact(dump, token)
+    # Set after redact(), not before: the key "token_location" itself would
+    # otherwise match the sensitive-key filter (it contains the segment
+    # "token") and its own answer would be destroyed.
+    redacted["meta"]["token_location"] = token_location
+    return redacted
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--host", default=os.environ.get("COMET_HOST", DEFAULT_HOST))
+    parser.add_argument(
+        "--host",
+        default=os.environ.get("COMET_HOST"),
+        help="Device LAN IP or hostname (or set COMET_HOST). Required — no default.",
+    )
     parser.add_argument("--pass-file", default=DEFAULT_PASS_FILE)
     parser.add_argument(
         "--probe-writes",
@@ -426,6 +441,13 @@ def main() -> None:
     )
     parser.add_argument("--ws-duration", type=float, default=30.0)
     args = parser.parse_args()
+
+    if not args.host:
+        print(
+            "no device host given: pass --host <ip-or-hostname> or set COMET_HOST",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     ssl_param = None if args.verify_ssl else False
 

@@ -31,16 +31,16 @@ is enabled.
 ## Verified shapes (live, 2026-08-29)
 
 **BLOCKED — not yet captured.** `tools/dump_api.py --probe-writes` was run
-once against the live device (`10.10.77.131`) with the credentials in
-`.comet_pass` and got back HTTP 403 ("password or TOTP code rejected") on
-the very first (and, per policy, only) login attempt of that run. Per the
-no-retry rule, the tool stopped immediately rather than trying again — a
-second consecutive failure would put the device two-thirds of the way to
-its 10-attempt/600s lockout.
+once against the live device, with the credentials in `.comet_pass`, and
+got back HTTP 403 ("password or TOTP code rejected") on the very first
+(and, per policy, only) login attempt of that run. Per the no-retry rule,
+the tool stopped immediately rather than trying again — a second
+consecutive failure would put the device two-thirds of the way to its
+10-attempt/600s lockout.
 
-The device is reachable (`curl -k https://10.10.77.131/` → 200) and the
-host's clock is NTP-synced, so this is not a network or clock-skew issue on
-this end. The `.comet_pass` parsing was verified offline: it produces a
+The device is reachable over HTTPS and the host's clock is NTP-synced, so
+this is not a network or clock-skew issue on this end. The `.comet_pass`
+parsing was verified offline: it produces a
 5-char user, a 32-char password, and a 32-char valid-base32 TOTP secret that
 generates a well-formed 6-digit code — so the failure is either a stale/
 incorrect credential in `.comet_pass`, or a mismatch between the assumed
