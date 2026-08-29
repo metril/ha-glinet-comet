@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import os
 import sys
 from unittest.mock import Mock
@@ -126,11 +127,13 @@ class FakeClient:
         return result
 
     async def get_atx(self):
-        return await self._call("get_atx", dict(ATX_RESULT))
+        return await self._call("get_atx", copy.deepcopy(ATX_RESULT))
 
     async def get_info(self, fields):
         if fields == "system":
-            return await self._call("get_info_system", {"system": dict(SYSTEM_SECTION)})
+            return await self._call(
+                "get_info_system", {"system": copy.deepcopy(SYSTEM_SECTION)}
+            )
         if fields == "hw":
             return await self._call(
                 "get_info_hw", {"hw": {"health": {}, "platform": {}}}
@@ -138,28 +141,32 @@ class FakeClient:
         raise AssertionError(f"unexpected fields={fields!r}")
 
     async def get_hid(self):
-        return await self._call("get_hid", dict(HID_RESULT))
+        return await self._call("get_hid", copy.deepcopy(HID_RESULT))
 
     async def get_msd(self):
-        return await self._call("get_msd", dict(MSD_RESULT))
+        return await self._call("get_msd", copy.deepcopy(MSD_RESULT))
 
     async def get_streamer(self):
-        return await self._call("get_streamer", dict(STREAMER_RESULT))
+        return await self._call("get_streamer", copy.deepcopy(STREAMER_RESULT))
 
     async def get_gpio(self):
-        return await self._call("get_gpio", dict(GPIO_RESULT))
+        return await self._call("get_gpio", copy.deepcopy(GPIO_RESULT))
 
     async def get_hostname(self):
-        return await self._call("get_hostname", dict(HOSTNAME_RESULT))
+        return await self._call("get_hostname", copy.deepcopy(HOSTNAME_RESULT))
 
     async def get_network_config(self):
-        return await self._call("get_network_config", dict(NETWORK_RESULT))
+        return await self._call("get_network_config", copy.deepcopy(NETWORK_RESULT))
 
     async def get_upgrade_version(self):
-        return await self._call("get_upgrade_version", dict(UPGRADE_VERSION_RESULT))
+        return await self._call(
+            "get_upgrade_version", copy.deepcopy(UPGRADE_VERSION_RESULT)
+        )
 
     async def get_upgrade_compare(self):
-        return await self._call("get_upgrade_compare", dict(UPGRADE_COMPARE_RESULT))
+        return await self._call(
+            "get_upgrade_compare", copy.deepcopy(UPGRADE_COMPARE_RESULT)
+        )
 
     async def connect_ws(self, stream: bool = True):
         ws = self.ws_sequence.pop(0) if self.ws_sequence else self.ws_to_return
@@ -386,6 +393,28 @@ async def test_gpio_bootstrap_400_marks_unsupported_and_is_skipped_next_cycle():
 
     assert client.calls["get_gpio"] == 1  # not called again
     assert state["msd"]["drive"]["cdrom"] is True
+
+
+@pytest.mark.asyncio
+async def test_gpio_result_fixture_not_aliased_across_coordinators():
+    """FakeClient.get_gpio() must not share nested dicts with GPIO_RESULT.
+
+    A shallow ``dict(GPIO_RESULT)`` copies only the top-level dict -- the
+    nested ``model.scheme.outputs``/``state.outputs`` dicts stay the exact
+    same objects, so ``_process_gpio_full`` (which stores those nested dicts
+    directly into coordinator state) aliases coordinator state onto the
+    module-level fixture. Mutating one coordinator's gpio state would then
+    silently corrupt ``GPIO_RESULT`` for every other test that runs after it.
+    """
+    client = FakeClient()
+    coord = make_coordinator(client)
+    state = await coord._async_update_data()
+
+    state["gpio_model"]["outputs"]["out_1"]["switch"] = False
+    state["gpio"]["outputs"]["out_1"]["state"] = True
+
+    assert GPIO_RESULT["model"]["scheme"]["outputs"]["out_1"]["switch"] is True
+    assert GPIO_RESULT["state"]["outputs"]["out_1"]["state"] is False
 
 
 # --- (b) optional read failure -> unsupported (400/404) vs retried (other) --
