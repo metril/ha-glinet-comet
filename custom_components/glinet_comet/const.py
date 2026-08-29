@@ -18,12 +18,14 @@ CONF_SCAN_INTERVAL: Final = "scan_interval"
 CONF_WS_RECONNECT_DELAY: Final = "ws_reconnect_delay"
 CONF_HTTP_TIMEOUT: Final = "http_timeout"
 CONF_ENABLE_ATX: Final = "enable_atx"
+CONF_KEEP_VIDEO_ACTIVE: Final = "keep_video_active"
 
 DEFAULT_USERNAME: Final = "admin"
 DEFAULT_SCAN_INTERVAL: Final = 300
 DEFAULT_WS_RECONNECT_DELAY: Final = 5
 DEFAULT_HTTP_TIMEOUT: Final = 10
 DEFAULT_ENABLE_ATX: Final = True
+DEFAULT_KEEP_VIDEO_ACTIVE: Final = True
 DEFAULT_VERIFY_SSL: Final = False
 
 SLOW_READ_INTERVAL: Final = 6 * 3600

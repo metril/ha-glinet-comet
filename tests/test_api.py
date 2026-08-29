@@ -387,6 +387,8 @@ def test_host_scheme_and_trailing_slash_are_stripped():
 
 @pytest.mark.asyncio
 async def test_connect_ws_uses_token_and_no_preview():
+    # kvmd only runs video capture while a stream=1 WS client is connected,
+    # so the default connect_ws() must request stream=1.
     fake_ws = object()
     session = _FakeSession([_login_ok("WSTOK")])
     session.queue_ws(fake_ws)
@@ -396,9 +398,23 @@ async def test_connect_ws_uses_token_and_no_preview():
 
     assert ws is fake_ws
     url, kwargs = session.ws_calls[0]
-    assert url == "wss://10.0.0.5/api/ws?stream=0&auth_token=WSTOK"
+    assert url == "wss://10.0.0.5/api/ws?stream=1&auth_token=WSTOK"
     assert kwargs["ssl"] is False
     assert kwargs["heartbeat"] == 30
+
+
+@pytest.mark.asyncio
+async def test_connect_ws_stream_false_uses_stream_zero():
+    fake_ws = object()
+    session = _FakeSession([_login_ok("WSTOK")])
+    session.queue_ws(fake_ws)
+    client = _client(session)
+
+    ws = await client.connect_ws(stream=False)
+
+    assert ws is fake_ws
+    url, _ = session.ws_calls[0]
+    assert url == "wss://10.0.0.5/api/ws?stream=0&auth_token=WSTOK"
 
 
 @pytest.mark.asyncio

@@ -431,14 +431,24 @@ class CometApiClient:
 
     # --- WebSocket ---
 
-    async def connect_ws(self) -> aiohttp.ClientWebSocketResponse:
-        """Open the WebSocket event stream, re-login-and-retry once on 401/403."""
+    async def connect_ws(
+        self, stream: bool = True
+    ) -> aiohttp.ClientWebSocketResponse:
+        """Open the WebSocket event stream, re-login-and-retry once on 401/403.
+
+        ``stream=True`` (default) requests ``stream=1``: kvmd only runs video
+        capture while a ``stream=1`` WS client is connected — otherwise
+        ``streamer.streamer`` stays null and snapshots 503. Pass
+        ``stream=False`` for a state-only connection (``stream=0``) that
+        doesn't need to keep the video pipeline active.
+        """
         path = "/api/ws"
+        stream_flag = "1" if stream else "0"
         for attempt in range(2):
             token = await self._get_token()
             url = (
                 f"wss://{self._host}{path}"
-                f"?stream=0&auth_token={quote(token, safe='')}"
+                f"?stream={stream_flag}&auth_token={quote(token, safe='')}"
             )
             try:
                 return await self._session.ws_connect(
