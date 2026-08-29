@@ -76,18 +76,25 @@ async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> Non
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Unload a GL.iNet Comet config entry."""
+    """Unload a GL.iNet Comet config entry.
+
+    Teardown (stopping the WS loop, logging out, dropping ``hass.data``,
+    unloading services) only runs once the platforms actually unloaded --
+    otherwise HA still holds live entities pointing at a client/coordinator
+    we'd have just torn down.
+    """
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
-    data = hass.data.get(DOMAIN, {}).get(entry.entry_id)
-    if data is not None:
-        coordinator: CometDataUpdateCoordinator = data["coordinator"]
-        client: CometApiClient = data["client"]
-        await coordinator.async_stop()
-        with contextlib.suppress(CometError):
-            await client.async_logout()
-        hass.data[DOMAIN].pop(entry.entry_id, None)
+    if unload_ok:
+        data = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+        if data is not None:
+            coordinator: CometDataUpdateCoordinator = data["coordinator"]
+            client: CometApiClient = data["client"]
+            await coordinator.async_stop()
+            with contextlib.suppress(CometError):
+                await client.async_logout()
+            hass.data[DOMAIN].pop(entry.entry_id, None)
 
-    async_unload_services(hass)
+        async_unload_services(hass)
 
     return unload_ok

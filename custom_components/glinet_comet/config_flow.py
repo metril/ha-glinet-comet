@@ -197,6 +197,9 @@ class CometConfigFlow(ConfigFlow, domain=DOMAIN):
                 errors["base"] = error
                 description_placeholders = extra
             else:
+                host = user_input[CONF_HOST]
+                await self.async_set_unique_id(_unique_id_from_info(extra, host))
+                self._abort_if_unique_id_mismatch()
                 return self.async_update_reload_and_abort(
                     reconfigure_entry, data=user_input
                 )

@@ -8,9 +8,10 @@ from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from .const import CONF_PASSWORD, CONF_TOTP_SECRET, CONF_USERNAME, DOMAIN
+from .const import CONF_HOST, CONF_PASSWORD, CONF_TOTP_SECRET, CONF_USERNAME, DOMAIN
 
 TO_REDACT = {
+    CONF_HOST,
     CONF_PASSWORD,
     CONF_TOTP_SECRET,
     CONF_USERNAME,

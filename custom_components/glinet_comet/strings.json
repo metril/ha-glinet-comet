@@ -50,7 +50,8 @@
     "abort": {
       "already_configured": "This Comet is already configured",
       "reauth_successful": "Re-authentication was successful",
-      "reconfigure_successful": "Reconfiguration was successful"
+      "reconfigure_successful": "Reconfiguration was successful",
+      "unique_id_mismatch": "This host is a different Comet than the one originally configured"
     }
   },
   "options": {

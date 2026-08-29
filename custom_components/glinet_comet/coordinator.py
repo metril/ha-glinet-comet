@@ -3,8 +3,11 @@
 Fast state (``atx``/``hid``/``msd``/``streamer``/``gpio``/``info``) is pushed
 over the WebSocket event stream (``/api/ws``); a slow HTTP-poll tier
 (``update_interval``) covers GL.iNet-specific reads the socket doesn't carry
-(hostname/network/upgrade info) and re-polls ``atx``, since no ``atx``
-WebSocket event was ever observed live on this firmware.
+(hostname/network/upgrade info) and re-polls ``atx``, ``hid``, ``msd``, and
+``streamer`` every cycle as a fallback source of truth -- MSD writes in
+particular push nothing back over the WebSocket, so those subsystems can't
+rely on WS push alone. ``gpio`` is still fetched once, on the first run
+only.
 """
 
 from __future__ import annotations
@@ -130,6 +133,13 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         core: dict[str, Any] = {
             "atx": self.client.get_atx(),
             "info_system": self.client.get_info("system"),
+            # hid/msd/streamer are read every cycle, not just bootstrapped on
+            # first_run: no WS event carries hid/msd/streamer writes back
+            # (MSD in particular pushes nothing), so this poll is the only
+            # way state resyncs after one.
+            "hid": self.client.get_hid(),
+            "msd": self.client.get_msd(),
+            "streamer": self.client.get_streamer(),
         }
         optional: dict[str, Any] = {}
 
@@ -153,9 +163,6 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             add_optional("upgrade_compare", lambda: self.client.get_upgrade_compare())
 
         if first_run:
-            core["hid"] = self.client.get_hid()
-            core["msd"] = self.client.get_msd()
-            core["streamer"] = self.client.get_streamer()
             add_optional("gpio", lambda: self.client.get_gpio())
 
         keys = [*core.keys(), *optional.keys()]
@@ -184,12 +191,22 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         for key in optional:
             result = by_key[key]
             if isinstance(result, CometApiError):
-                _LOGGER.debug(
-                    "Comet: %s not supported by this firmware, skipping: %s",
-                    key,
-                    result,
-                )
-                unsupported.append(key)
+                if result.status in (400, 404):
+                    _LOGGER.debug(
+                        "Comet: %s not supported by this firmware, skipping: %s",
+                        key,
+                        result,
+                    )
+                    unsupported.append(key)
+                else:
+                    # A transient failure (5xx, ok:false, unparseable body):
+                    # don't give up on this field forever, just retry it
+                    # next cycle.
+                    _LOGGER.debug(
+                        "%s read failed (HTTP %s); will retry next cycle",
+                        key,
+                        result.status,
+                    )
 
         for key, result in by_key.items():
             if isinstance(result, BaseException):

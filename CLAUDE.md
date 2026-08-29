@@ -47,6 +47,11 @@ which runs `glkvm` — GL.iNet's fork of PiKVM's `kvmd`.
 
 ## Gotchas learned
 
+- `CometApiError.status` (HTTP status; `200` for an `ok:false` envelope;
+  `None` for an unparseable body) is what the coordinator uses to decide
+  whether an optional read is unsupported: only `400`/`404` mark a field
+  `unsupported` (skipped thereafter), any other status just retries next
+  cycle.
 - `info?fields=hw` and `info?fields=health` both 400 on V1.9.1 — this
   firmware exposes no CPU/mem/temp/network metrics at all; don't
   reintroduce those sensors without re-verifying on other firmware.

@@ -162,12 +162,72 @@ def _stub_homeassistant() -> None:
         CONNECTION_NETWORK_MAC="mac",
         async_get=MagicMock(),
     )
+    ha_ep = _mod(
+        "homeassistant.helpers.entity_platform",
+        AddEntitiesCallback=object,
+    )
 
     ha_helpers.update_coordinator = ha_uc
     ha_helpers.aiohttp_client = ha_ac
     ha_helpers.config_validation = ha_cv
     ha_helpers.device_registry = ha_dr
     ha_helpers.event = ha_evt
+    ha_helpers.entity_platform = ha_ep
+
+    # --- homeassistant.components.* (only the bits switch/select/diagnostics use) --
+
+    class _SelectEntity:
+        pass
+
+    ha_comp_select = _mod("homeassistant.components.select", SelectEntity=_SelectEntity)
+
+    from dataclasses import dataclass
+
+    @dataclass(frozen=True, kw_only=True)
+    class _EntityDescription:
+        key: str
+        name: str | None = None
+        icon: str | None = None
+        device_class: str | None = None
+        entity_category: str | None = None
+
+    @dataclass(frozen=True, kw_only=True)
+    class _SwitchEntityDescription(_EntityDescription):
+        pass
+
+    class _SwitchEntity:
+        pass
+
+    ha_comp_switch = _mod(
+        "homeassistant.components.switch",
+        SwitchEntity=_SwitchEntity,
+        SwitchEntityDescription=_SwitchEntityDescription,
+    )
+
+    def _redact(value, to_redact):
+        if isinstance(value, dict):
+            return {
+                k: (
+                    "**REDACTED**"
+                    if k in to_redact and v is not None
+                    else _redact(v, to_redact)
+                )
+                for k, v in value.items()
+            }
+        if isinstance(value, list):
+            return [_redact(v, to_redact) for v in value]
+        return value
+
+    ha_comp_diagnostics = _mod(
+        "homeassistant.components.diagnostics",
+        async_redact_data=lambda data, to_redact: _redact(data, to_redact),
+        REDACTED="**REDACTED**",
+    )
+
+    ha_components = _mod("homeassistant.components")
+    ha_components.select = ha_comp_select
+    ha_components.switch = ha_comp_switch
+    ha_components.diagnostics = ha_comp_diagnostics
 
     modules = {
         "homeassistant": ha,
@@ -181,6 +241,11 @@ def _stub_homeassistant() -> None:
         "homeassistant.helpers.config_validation": ha_cv,
         "homeassistant.helpers.device_registry": ha_dr,
         "homeassistant.helpers.event": ha_evt,
+        "homeassistant.helpers.entity_platform": ha_ep,
+        "homeassistant.components": ha_components,
+        "homeassistant.components.select": ha_comp_select,
+        "homeassistant.components.switch": ha_comp_switch,
+        "homeassistant.components.diagnostics": ha_comp_diagnostics,
     }
     for name, module in modules.items():
         sys.modules.setdefault(name, module)

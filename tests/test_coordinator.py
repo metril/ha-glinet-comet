@@ -279,19 +279,22 @@ async def test_first_update_bootstraps_all_subsystems_and_returns_schema_keys():
 
 
 @pytest.mark.asyncio
-async def test_second_update_does_not_repeat_bootstrap_only_reads():
+async def test_second_update_does_not_repeat_gpio_bootstrap_only_read():
     client = FakeClient()
     coord = make_coordinator(client)
     await coord._async_update_data()
     await coord._async_update_data()
 
-    assert client.calls["get_hid"] == 1
-    assert client.calls["get_msd"] == 1
-    assert client.calls["get_streamer"] == 1
+    # gpio is the only subsystem still bootstrapped once, on first_run only.
     assert client.calls["get_gpio"] == 1
-    # atx/info are polled every cycle
+    # atx/info/hid/msd/streamer are polled every cycle -- hid/msd/streamer
+    # get no WS-pushed writes back (MSD in particular pushes nothing), so
+    # they can't rely on WS push alone and are re-polled every cycle too.
     assert client.calls["get_atx"] == 2
     assert client.calls["get_info_system"] == 2
+    assert client.calls["get_hid"] == 2
+    assert client.calls["get_msd"] == 2
+    assert client.calls["get_streamer"] == 2
 
 
 @pytest.mark.asyncio
@@ -300,11 +303,12 @@ async def test_first_run_bootstrap_retried_after_first_cycle_failure():
 
     Regression for: `_first_run` used to be flipped to False up front, before
     the gather/error checks. If the very first cycle raised (any core read
-    failing, rate limit, auth), the hid/msd/streamer/gpio results from that
-    cycle were discarded along with everything else, but the flag was already
-    spent -- so those subsystems would never be bootstrapped again for the
-    life of the coordinator. The flag must only be marked consumed once a
-    cycle actually succeeds.
+    failing, rate limit, auth), the gpio bootstrap read from that cycle was
+    discarded along with everything else, but the flag was already spent --
+    so gpio would never be fetched again for the life of the coordinator.
+    The flag must only be marked consumed once a cycle actually succeeds.
+    hid/msd/streamer are unaffected either way since they're core reads
+    fetched every cycle regardless of `_first_run`.
     """
     client = FakeClient()
     client.fail_always("get_atx", CometConnectionError("down"))
@@ -313,8 +317,8 @@ async def test_first_run_bootstrap_retried_after_first_cycle_failure():
     with pytest.raises(UpdateFailed):
         await coord._async_update_data()
 
-    # The bootstrap reads ran (gather is concurrent), but the cycle raised
-    # before anything was committed to state.
+    # All core reads ran (gather is concurrent), but the cycle raised before
+    # anything was committed to state.
     assert client.calls["get_hid"] == 1
     assert coord._state["hid"] == {}
 
@@ -322,7 +326,7 @@ async def test_first_run_bootstrap_retried_after_first_cycle_failure():
 
     state = await coord._async_update_data()
 
-    # Bootstrap was retried, not silently skipped forever.
+    # gpio's bootstrap was retried, not silently skipped forever.
     assert client.calls["get_hid"] == 2
     assert client.calls["get_msd"] == 2
     assert client.calls["get_streamer"] == 2
@@ -331,13 +335,15 @@ async def test_first_run_bootstrap_retried_after_first_cycle_failure():
     assert state["msd"]["drive"]["cdrom"] is True
 
 
-# --- (b) optional read failure -> unsupported, skipped next cycle -----------
+# --- (b) optional read failure -> unsupported (400/404) vs retried (other) --
 
 
 @pytest.mark.asyncio
-async def test_optional_read_failure_marks_unsupported_and_is_skipped_next_cycle():
+async def test_optional_read_400_marks_unsupported_and_is_skipped_next_cycle():
     client = FakeClient()
-    client.fail_always("get_hostname", CometApiError("ValidatorError: nope"))
+    client.fail_always(
+        "get_hostname", CometApiError("ValidatorError: nope", status=400)
+    )
     coord = make_coordinator(client)
 
     state = await coord._async_update_data()
@@ -352,6 +358,47 @@ async def test_optional_read_failure_marks_unsupported_and_is_skipped_next_cycle
 
     await coord._async_update_data()
     assert client.calls["get_hostname"] == 1  # not called again
+
+
+@pytest.mark.asyncio
+async def test_optional_read_404_marks_unsupported_and_is_skipped_next_cycle():
+    client = FakeClient()
+    client.fail_always("get_hostname", CometApiError("not found", status=404))
+    coord = make_coordinator(client)
+
+    state = await coord._async_update_data()
+
+    assert "hostname" in state["unsupported"]
+    assert client.calls["get_hostname"] == 1
+
+    await coord._async_update_data()
+    assert client.calls["get_hostname"] == 1  # not called again
+
+
+@pytest.mark.asyncio
+async def test_optional_read_transient_500_is_not_unsupported_and_retries():
+    """A transient HTTP error must not permanently disable an optional read.
+
+    Regression for: any CometApiError (500/503/ok:false) used to mark a
+    field unsupported forever. Only status 400/404 (the firmware genuinely
+    doesn't support the field) should do that -- anything else must be
+    retried next cycle.
+    """
+    client = FakeClient()
+    client.fail_always("get_hostname", CometApiError("HTTP 500: boom", status=500))
+    coord = make_coordinator(client)
+
+    state = await coord._async_update_data()
+
+    assert "hostname" not in state["unsupported"]
+    assert client.calls["get_hostname"] == 1
+
+    client._raise_always.pop("get_hostname")
+    state = await coord._async_update_data()
+
+    assert client.calls["get_hostname"] == 2  # retried, not skipped
+    assert state["glinet"]["hostname"] == HOSTNAME_RESULT
+    assert "hostname" not in state["unsupported"]
 
 
 # --- (c) core auth / rate-limit errors ---------------------------------------

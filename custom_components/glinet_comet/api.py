@@ -38,7 +38,17 @@ class CometConnectionError(CometError):
 
 
 class CometApiError(CometError):
-    """Raised when the Comet API returns an error response."""
+    """Raised when the Comet API returns an error response.
+
+    ``status`` is the HTTP status for a non-200 response, ``200`` for a
+    200 response with an ``ok: false`` envelope (or a missing token on
+    login), or ``None`` when the body couldn't be parsed as JSON at all.
+    """
+
+    def __init__(self, message: str, status: int | None = None) -> None:
+        """Initialize with the error message and the originating HTTP status."""
+        self.status = status
+        super().__init__(message)
 
 
 class CometRateLimitError(CometError):
@@ -106,6 +116,9 @@ class CometApiClient:
         passwd = self._login_password()
         method, path = "POST", "/api/auth/login"
         _LOGGER.debug("Comet API: %s %s", method, path)
+        # allow_redirects=False: a 307/308 would silently re-send the login
+        # form (credentials included) to another URL -- one extra attempt
+        # that counts toward the device's 10-failure lockout for no reason.
         try:
             async with self._session.request(
                 method,
@@ -113,6 +126,7 @@ class CometApiClient:
                 data={"user": self._username, "passwd": passwd, "expire": "0"},
                 ssl=self._ssl,
                 timeout=aiohttp.ClientTimeout(total=self._http_timeout),
+                allow_redirects=False,
             ) as resp:
                 _LOGGER.debug(
                     "Comet API response: %s %s -> HTTP %s", method, path, resp.status
@@ -127,7 +141,7 @@ class CometApiClient:
                     await self._raise_generic_error(method, path, resp)
                 body = await self._read_json(method, path, resp)
                 if not isinstance(body, dict) or not body.get("ok", False):
-                    raise CometApiError(self._envelope_error_message(body))
+                    raise CometApiError(self._envelope_error_message(body), status=200)
                 result = body.get("result") or {}
                 if result.get("two_step_required"):
                     raise CometAuthError(
@@ -135,7 +149,9 @@ class CometApiClient:
                     )
                 token = result.get("token") or body.get("token")
                 if not token:
-                    raise CometApiError("login response did not include a token")
+                    raise CometApiError(
+                        "login response did not include a token", status=200
+                    )
                 self._token = token
         except CometError:
             raise
@@ -160,16 +176,23 @@ class CometApiClient:
                 headers={"Token": token},
                 ssl=self._ssl,
                 timeout=aiohttp.ClientTimeout(total=self._http_timeout),
+                allow_redirects=False,
             ):
                 pass
         except (aiohttp.ClientError, asyncio.TimeoutError):
             _LOGGER.debug("Comet API: %s %s failed (ignored)", method, path)
 
     async def test_connection(self) -> dict[str, Any]:
-        """Verify credentials/connectivity; returns the system info result."""
+        """Verify credentials/connectivity; returns the system info result.
+
+        ``allow_reauth=False``: a 401/403 immediately after a fresh
+        ``async_login()`` is a real failure, not a stale token -- retrying
+        would burn a second login attempt against the device's lockout
+        counter for one validation.
+        """
         if self._token is None:
             await self.async_login()
-        return await self.get_info(fields="system")
+        return await self.get_info(fields="system", allow_reauth=False)
 
     # --- Token lifecycle ---
 
@@ -196,12 +219,22 @@ class CometApiClient:
         method: str,
         path: str,
         reader: Callable[[aiohttp.ClientResponse], Awaitable[_T]],
+        *,
+        allow_reauth: bool = True,
         **kwargs: Any,
     ) -> _T:
-        """Issue an authenticated request, re-login-and-retry once on 401/403."""
+        """Issue an authenticated request, re-login-and-retry once on 401/403.
+
+        ``allow_reauth=False`` raises ``CometAuthError`` on the first 401/403
+        instead of retrying -- for call sites (like ``test_connection``)
+        where a failure right after a fresh login is a real auth error, not
+        a stale token, and a blind retry would just be a second login
+        attempt against the device's lockout counter.
+        """
         extra_headers = kwargs.pop("headers", None) or {}
         url = f"{self._base_url}{path}"
-        for attempt in range(2):
+        attempts = 2 if allow_reauth else 1
+        for attempt in range(attempts):
             token = await self._get_token()
             headers = {**extra_headers, "Token": token}
             _LOGGER.debug("Comet API: %s %s", method, path)
@@ -221,7 +254,7 @@ class CometApiClient:
                         resp.status,
                     )
                     if resp.status in _AUTH_FAILURE_STATUSES:
-                        if attempt == 0:
+                        if allow_reauth and attempt == 0:
                             await self._reauth(token)
                             continue
                         raise CometAuthError(f"{method} {path}: authentication failed")
@@ -238,13 +271,17 @@ class CometApiClient:
                 raise CometConnectionError(f"{method} {path}: connection error") from err
         raise CometAuthError(f"{method} {path}: authentication failed")
 
-    async def _request(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+    async def _request(
+        self, method: str, path: str, *, allow_reauth: bool = True, **kwargs: Any
+    ) -> dict[str, Any]:
         """Make an authenticated request, returning the parsed ``result`` dict."""
 
         async def _reader(resp: aiohttp.ClientResponse) -> dict[str, Any]:
             return await self._parse_ok_body(method, path, resp)
 
-        return await self._send(method, path, _reader, **kwargs)
+        return await self._send(
+            method, path, _reader, allow_reauth=allow_reauth, **kwargs
+        )
 
     async def _request_raw(self, method: str, path: str, **kwargs: Any) -> bytes:
         """Make an authenticated request, returning the raw response bytes."""
@@ -260,7 +297,9 @@ class CometApiClient:
         try:
             return await resp.json(content_type=None)
         except (ValueError, aiohttp.ContentTypeError) as err:
-            raise CometApiError(f"{method} {path}: invalid response body") from err
+            raise CometApiError(
+                f"{method} {path}: invalid response body", status=None
+            ) from err
 
     @staticmethod
     def _envelope_error_message(body: Any) -> str:
@@ -277,7 +316,7 @@ class CometApiClient:
         """Parse a 200 response body, raising CometApiError on ``ok: false``."""
         body = await self._read_json(method, path, resp)
         if not isinstance(body, dict) or not body.get("ok", False):
-            raise CometApiError(self._envelope_error_message(body))
+            raise CometApiError(self._envelope_error_message(body), status=200)
         return body.get("result") or {}
 
     async def _raise_generic_error(
@@ -293,9 +332,11 @@ class CometApiClient:
             error = result.get("error", "")
             error_msg = result.get("error_msg", "")
             if error or error_msg:
-                raise CometApiError(f"{error}: {error_msg}")
+                raise CometApiError(f"{error}: {error_msg}", status=resp.status)
         text = await resp.text()
-        raise CometApiError(f"{method} {path}: HTTP {resp.status}: {text[:200]}")
+        raise CometApiError(
+            f"{method} {path}: HTTP {resp.status}: {text[:200]}", status=resp.status
+        )
 
     @staticmethod
     async def _read_remaining_time(resp: aiohttp.ClientResponse) -> int:
@@ -311,9 +352,15 @@ class CometApiClient:
 
     # --- Reads ---
 
-    async def get_info(self, fields: str = "system,health") -> dict[str, Any]:
+    async def get_info(
+        self, fields: str = "system,health", *, allow_reauth: bool = True
+    ) -> dict[str, Any]:
         """Fetch system/health info."""
-        return await self._request("GET", f"/api/info?{urlencode({'fields': fields})}")
+        return await self._request(
+            "GET",
+            f"/api/info?{urlencode({'fields': fields})}",
+            allow_reauth=allow_reauth,
+        )
 
     async def get_atx(self) -> dict[str, Any]:
         """Fetch ATX power state."""

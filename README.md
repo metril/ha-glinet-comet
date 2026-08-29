@@ -127,6 +127,9 @@ valid for a ±30 second window.
   expose those fields via its info API, so there's nothing to surface.
 - **MSD images**: images must be uploaded to the Comet through its own web
   UI first; the `MSD Image` select only chooses among images already there.
+- **Firmware**: the Firmware update entity is read-only — it shows when
+  GL.iNet publishes a newer version; install it from the Comet's own web UI
+  (System → Upgrade).
 
 ## Not yet supported
 

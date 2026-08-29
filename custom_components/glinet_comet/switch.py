@@ -34,6 +34,11 @@ def _set_hid_connected(data: dict[str, Any], value: bool) -> None:
     data.setdefault("hid", {})["connected"] = value
 
 
+def _set_msd_drive_connected(data: dict[str, Any], value: bool) -> None:
+    """Optimistically set ``msd.drive.connected`` in coordinator state."""
+    data.setdefault("msd", {}).setdefault("drive", {})["connected"] = value
+
+
 @dataclass(frozen=True, kw_only=True)
 class CometSwitchDescription(SwitchEntityDescription):
     """Describes a GL.iNet Comet switch."""
@@ -175,6 +180,9 @@ class CometMsdConnectedSwitch(CometEntity, SwitchEntity):
             await self.coordinator.client.set_msd_connected(True)
         except CometError as err:
             raise HomeAssistantError(str(err)) from err
+        if self.coordinator.data is not None:
+            _set_msd_drive_connected(self.coordinator.data, True)
+            self.coordinator.async_set_updated_data(self.coordinator.data)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Disconnect the virtual drive."""
@@ -182,3 +190,6 @@ class CometMsdConnectedSwitch(CometEntity, SwitchEntity):
             await self.coordinator.client.set_msd_connected(False)
         except CometError as err:
             raise HomeAssistantError(str(err)) from err
+        if self.coordinator.data is not None:
+            _set_msd_drive_connected(self.coordinator.data, False)
+            self.coordinator.async_set_updated_data(self.coordinator.data)

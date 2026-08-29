@@ -72,15 +72,25 @@ class CometMsdImageSelect(CometEntity, SelectEntity):
 
         MSD must be disconnected before ``set_msd_params`` is called. The
         "(none)" sentinel is never sent to the device -- it maps to
-        ``image=""``.
+        ``image=""``. Applies an optimistic update to ``coordinator.data``
+        afterward -- MSD writes push nothing back over the WebSocket, so
+        without this the image/connected state would go stale until the
+        next slow-tier poll.
         """
         data = self.coordinator.data or {}
         image = "" if option == MSD_IMAGE_NONE else option
+        was_connected = parsers.msd_connected(data) is True
         try:
-            if parsers.msd_connected(data) is True:
+            if was_connected:
                 await self.coordinator.client.set_msd_connected(False)
             await self.coordinator.client.set_msd_params(
                 image=image, cdrom=True, rw=False
             )
         except CometError as err:
             raise HomeAssistantError(str(err)) from err
+        if self.coordinator.data is not None:
+            drive = self.coordinator.data.setdefault("msd", {}).setdefault("drive", {})
+            if was_connected:
+                drive["connected"] = False
+            drive["image"] = image or None
+            self.coordinator.async_set_updated_data(self.coordinator.data)

@@ -113,6 +113,32 @@ async def test_login_appends_fresh_totp_code(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_login_disables_redirects():
+    # A 307/308 redirect would silently re-send the login form (with
+    # credentials) elsewhere -- an extra attempt against the device's
+    # 10-failure lockout counter for no reason.
+    session = _FakeSession([_login_ok()])
+    client = _client(session)
+
+    await client.async_login()
+
+    _, _, kwargs = session.requests[0]
+    assert kwargs["allow_redirects"] is False
+
+
+@pytest.mark.asyncio
+async def test_logout_disables_redirects():
+    session = _FakeSession([_login_ok("TOK"), _ok({})])
+    client = _client(session)
+    await client.async_login()
+
+    await client.async_logout()
+
+    _, _, kwargs = session.requests[-1]
+    assert kwargs["allow_redirects"] is False
+
+
+@pytest.mark.asyncio
 async def test_login_without_totp_secret_sends_plain_password():
     session = _FakeSession([_login_ok()])
     client = _client(session, totp_secret="")
@@ -153,8 +179,9 @@ async def test_200_ok_false_raises_api_error():
     )
     client = _client(session)
 
-    with pytest.raises(CometApiError, match="Busy: device busy"):
+    with pytest.raises(CometApiError, match="Busy: device busy") as exc_info:
         await client.get_atx()
+    assert exc_info.value.status == 200
 
 
 @pytest.mark.asyncio
@@ -164,8 +191,49 @@ async def test_500_plain_text_raises_api_error_without_json_decode_error():
     )
     client = _client(session)
 
-    with pytest.raises(CometApiError):
+    with pytest.raises(CometApiError) as exc_info:
         await client.atx_click("power")
+    assert exc_info.value.status == 500
+
+
+@pytest.mark.asyncio
+async def test_400_dict_error_body_carries_status():
+    session = _FakeSession(
+        [
+            _login_ok(),
+            _FakeResp(
+                400,
+                {"ok": False, "result": {"error": "ValidatorError", "error_msg": "bad"}},
+            ),
+        ]
+    )
+    client = _client(session)
+
+    with pytest.raises(CometApiError) as exc_info:
+        await client.get_hostname()
+    assert exc_info.value.status == 400
+
+
+@pytest.mark.asyncio
+async def test_invalid_json_body_raises_api_error_with_no_status():
+    session = _FakeSession(
+        [_login_ok(), _FakeResp(200, "not actually json", is_json=False)]
+    )
+    client = _client(session)
+
+    with pytest.raises(CometApiError) as exc_info:
+        await client.get_atx()
+    assert exc_info.value.status is None
+
+
+@pytest.mark.asyncio
+async def test_login_missing_token_raises_api_error_status_200():
+    session = _FakeSession([_ok({})])
+    client = _client(session)
+
+    with pytest.raises(CometApiError) as exc_info:
+        await client.async_login()
+    assert exc_info.value.status == 200
 
 
 @pytest.mark.asyncio
@@ -508,3 +576,29 @@ async def test_connection_logs_in_and_returns_info_result():
     assert url.startswith("https://10.0.0.5/api/info")
     query = parse_qs(urlsplit(url).query)
     assert query["fields"] == ["system"]
+
+
+@pytest.mark.asyncio
+async def test_connection_info_403_raises_auth_error_without_a_second_login():
+    """test_connection must not relogin-and-retry the info call.
+
+    A 401/403 on get_info() right after a fresh async_login() is a real
+    auth failure, not a stale token -- retrying would be a second login
+    attempt counted toward the device's 10-failure lockout, for a single
+    connection validation.
+    """
+    session = _FakeSession(
+        [
+            _login_ok("TOK1"),
+            _FakeResp(403, {"ok": False, "result": {}}),
+        ]
+    )
+    client = _client(session)
+
+    with pytest.raises(CometAuthError):
+        await client.test_connection()
+
+    login_requests = [
+        r for r in session.requests if urlsplit(r[1]).path == "/api/auth/login"
+    ]
+    assert len(login_requests) == 1

@@ -48,6 +48,11 @@ def test_device_model_empty():
     assert parsers.device_model({}) is None
 
 
+def test_device_model_empty_string_is_none():
+    state = {"info": {"system": {"platform": {"model": ""}}}}
+    assert parsers.device_model(state) is None
+
+
 def test_firmware_version(live):
     assert parsers.firmware_version(live) == "V1.9.1 release1"
 
@@ -56,12 +61,26 @@ def test_firmware_version_empty():
     assert parsers.firmware_version({}) is None
 
 
+def test_firmware_version_empty_string_is_none():
+    state = {"glinet": {"upgrade_version": {"version": ""}}}
+    assert parsers.firmware_version(state) is None
+
+
 def test_serial_empty():
     assert parsers.serial({}) is None
 
 
+def test_serial_empty_string_is_none():
+    assert parsers.serial({"info": {"system": {"platform": {"serial": ""}}}}) is None
+
+
 def test_mac_address_empty():
     assert parsers.mac_address({}) is None
+
+
+def test_mac_address_empty_string_is_none():
+    state = {"glinet": {"network": {"mac_address": ""}}}
+    assert parsers.mac_address(state) is None
 
 
 # --- ATX ---------------------------------------------------------------

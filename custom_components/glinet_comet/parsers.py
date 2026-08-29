@@ -46,34 +46,34 @@ def first_path(data: Any, *paths: str) -> Any:
 
 def device_model(data: dict[str, Any]) -> str | None:
     """Return the device model string (e.g. ``RM1PE``)."""
-    value = first_path(
-        data, "glinet.upgrade_version.model", "info.system.platform.model"
+    return _as_str(
+        first_path(data, "glinet.upgrade_version.model", "info.system.platform.model")
     )
-    return str(value) if value is not None else None
 
 
 def firmware_version(data: dict[str, Any]) -> str | None:
     """Return the installed firmware version string."""
-    value = first_path(
-        data,
-        "glinet.upgrade_version.version",
-        "glinet.upgrade_compare.local_version",
+    return _as_str(
+        first_path(
+            data,
+            "glinet.upgrade_version.version",
+            "glinet.upgrade_compare.local_version",
+        )
     )
-    return str(value) if value is not None else None
 
 
 def serial(data: dict[str, Any]) -> str | None:
     """Return the device serial number."""
-    value = _dig(data, "info.system.platform.serial")
-    return str(value) if value is not None else None
+    return _as_str(_dig(data, "info.system.platform.serial"))
 
 
 def mac_address(data: dict[str, Any]) -> str | None:
     """Return the device's network MAC address."""
-    value = first_path(
-        data, "glinet.network.config.mac_address", "glinet.network.mac_address"
+    return _as_str(
+        first_path(
+            data, "glinet.network.config.mac_address", "glinet.network.mac_address"
+        )
     )
-    return str(value) if value is not None else None
 
 
 def _as_bool(value: Any) -> bool | None:
