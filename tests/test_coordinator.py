@@ -802,3 +802,17 @@ def test_comet_atx_entity_available_requires_atx_enabled():
 
     coord._state["atx"] = {"enabled": True}
     assert entity.available is True
+
+
+def test_gpio_entities_are_comet_gpio_entity_subclasses():
+    """Proof for item 1's dedupe: all three GPIO entity classes share one base."""
+    from custom_components.glinet_comet.binary_sensor import (
+        CometGpioInputBinarySensor,
+    )
+    from custom_components.glinet_comet.button import CometGpioPulseButton
+    from custom_components.glinet_comet.entity import CometGpioEntity
+    from custom_components.glinet_comet.switch import CometGpioSwitch
+
+    assert issubclass(CometGpioInputBinarySensor, CometGpioEntity)
+    assert issubclass(CometGpioSwitch, CometGpioEntity)
+    assert issubclass(CometGpioPulseButton, CometGpioEntity)

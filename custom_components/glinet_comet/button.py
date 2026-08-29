@@ -21,7 +21,7 @@ from . import parsers
 from .api import CometApiClient, CometError
 from .const import CONF_ENABLE_ATX, DEFAULT_ENABLE_ATX, DOMAIN
 from .coordinator import CometDataUpdateCoordinator
-from .entity import CometAtxEntity, CometEntity
+from .entity import CometAtxEntity, CometEntity, CometGpioEntity
 
 
 async def _press_reboot(client: CometApiClient) -> None:
@@ -151,7 +151,7 @@ class CometAtxButton(_CometButtonMixin, CometAtxEntity, ButtonEntity):
     """
 
 
-class CometGpioPulseButton(CometEntity, ButtonEntity):
+class CometGpioPulseButton(CometGpioEntity, ButtonEntity):
     """A GPIO output channel with a pulse config, exposed as a button.
 
     Only created for outputs that have a ``pulse`` config and aren't already
@@ -160,6 +160,8 @@ class CometGpioPulseButton(CometEntity, ButtonEntity):
     """
 
     _attr_icon = "mdi:gesture-tap-button"
+    _gpio_kind = "outputs"
+    _gpio_id_kind = "pulse"
 
     def __init__(
         self,
@@ -169,20 +171,8 @@ class CometGpioPulseButton(CometEntity, ButtonEntity):
         delay: float,
     ) -> None:
         """Initialize the GPIO pulse button."""
-        super().__init__(coordinator, entry)
-        self._channel = channel
+        super().__init__(coordinator, entry, channel)
         self._delay = delay
-        self._attr_unique_id = f"{entry.entry_id}_gpio_pulse_{channel}"
-        labels = (coordinator.data or {}).get("gpio_labels")
-        self._attr_name = parsers.gpio_display_name(channel, labels)
-
-    @property
-    def available(self) -> bool:
-        """Return True only if the coordinator is available and the channel is online."""
-        if not super().available or self.coordinator.data is None:
-            return False
-        channel = parsers.gpio_channel(self.coordinator.data, "outputs", self._channel)
-        return channel.get("online") is True
 
     async def async_press(self) -> None:
         """Pulse the GPIO output channel."""

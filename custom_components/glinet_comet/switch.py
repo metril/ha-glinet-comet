@@ -16,7 +16,7 @@ from . import parsers
 from .api import CometApiClient, CometError
 from .const import DOMAIN
 from .coordinator import CometDataUpdateCoordinator
-from .entity import CometEntity
+from .entity import CometEntity, CometGpioEntity
 
 
 def _set_jiggler_enabled(data: dict[str, Any], value: bool) -> None:
@@ -203,42 +203,20 @@ class CometMsdConnectedSwitch(CometEntity, SwitchEntity):
             self.coordinator.async_set_updated_data(self.coordinator.data)
 
 
-class CometGpioSwitch(CometEntity, SwitchEntity):
+class CometGpioSwitch(CometGpioEntity, SwitchEntity):
     """A GPIO output channel exposed as a switch.
 
     No optimistic update -- the device pushes ``gpio`` WebSocket frames.
     """
 
     _attr_icon = "mdi:electric-switch"
-
-    def __init__(
-        self,
-        coordinator: CometDataUpdateCoordinator,
-        entry: ConfigEntry,
-        channel: str,
-    ) -> None:
-        """Initialize the GPIO switch."""
-        super().__init__(coordinator, entry)
-        self._channel = channel
-        self._attr_unique_id = f"{entry.entry_id}_gpio_out_{channel}"
-        labels = (coordinator.data or {}).get("gpio_labels")
-        self._attr_name = parsers.gpio_display_name(channel, labels)
+    _gpio_kind = "outputs"
+    _gpio_id_kind = "out"
 
     @property
     def is_on(self) -> bool | None:
         """Return the GPIO output state."""
-        if self.coordinator.data is None:
-            return None
-        channel = parsers.gpio_channel(self.coordinator.data, "outputs", self._channel)
-        return channel.get("state")
-
-    @property
-    def available(self) -> bool:
-        """Return True only if the coordinator is available and the channel is online."""
-        if not super().available or self.coordinator.data is None:
-            return False
-        channel = parsers.gpio_channel(self.coordinator.data, "outputs", self._channel)
-        return channel.get("online") is True
+        return self._channel_state.get("state")
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Switch the GPIO output on."""

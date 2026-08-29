@@ -19,7 +19,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from . import parsers
 from .const import CONF_ENABLE_ATX, DEFAULT_ENABLE_ATX, DOMAIN
 from .coordinator import CometDataUpdateCoordinator
-from .entity import CometAtxEntity, CometEntity
+from .entity import CometAtxEntity, CometEntity, CometGpioEntity
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -133,39 +133,17 @@ class CometAtxBinarySensor(_CometBinarySensorMixin, CometAtxEntity, BinarySensor
     """
 
 
-class CometGpioInputBinarySensor(CometEntity, BinarySensorEntity):
+class CometGpioInputBinarySensor(CometGpioEntity, BinarySensorEntity):
     """A GPIO input channel exposed as a binary sensor.
 
     No optimistic update -- the device pushes ``gpio`` WebSocket frames.
     """
 
     _attr_entity_category = EntityCategory.DIAGNOSTIC
-
-    def __init__(
-        self,
-        coordinator: CometDataUpdateCoordinator,
-        entry: ConfigEntry,
-        channel: str,
-    ) -> None:
-        """Initialize the GPIO input binary sensor."""
-        super().__init__(coordinator, entry)
-        self._channel = channel
-        self._attr_unique_id = f"{entry.entry_id}_gpio_in_{channel}"
-        labels = (coordinator.data or {}).get("gpio_labels")
-        self._attr_name = parsers.gpio_display_name(channel, labels)
+    _gpio_kind = "inputs"
+    _gpio_id_kind = "in"
 
     @property
     def is_on(self) -> bool | None:
         """Return the GPIO input state."""
-        if self.coordinator.data is None:
-            return None
-        channel = parsers.gpio_channel(self.coordinator.data, "inputs", self._channel)
-        return channel.get("state")
-
-    @property
-    def available(self) -> bool:
-        """Return True only if the coordinator is available and the channel is online."""
-        if not super().available or self.coordinator.data is None:
-            return False
-        channel = parsers.gpio_channel(self.coordinator.data, "inputs", self._channel)
-        return channel.get("online") is True
+        return self._channel_state.get("state")
