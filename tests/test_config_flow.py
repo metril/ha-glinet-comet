@@ -142,6 +142,11 @@ async def test_user_step_invalid_auth(fake_client):
     flow = config_flow.CometConfigFlow()
     result = await flow.async_step_user(_user_input())
     assert result["errors"]["base"] == "invalid_auth"
+    # Pins single-shot login + logout-in-`finally` on the failure path: the
+    # device locks logins for 10 minutes after 10 failures, so this must
+    # never construct a second client or retry the login itself.
+    assert fake_client.logout_calls == 1
+    assert len(fake_client.instances) == 1
 
 
 async def test_user_step_cannot_connect(fake_client):
@@ -149,6 +154,8 @@ async def test_user_step_cannot_connect(fake_client):
     flow = config_flow.CometConfigFlow()
     result = await flow.async_step_user(_user_input())
     assert result["errors"]["base"] == "cannot_connect"
+    assert fake_client.logout_calls == 1
+    assert len(fake_client.instances) == 1
 
 
 async def test_user_step_unknown(fake_client):

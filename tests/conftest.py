@@ -86,7 +86,18 @@ def _stub_homeassistant() -> None:
             self.description_placeholders = description_placeholders
             super().__init__(reason)
 
-    ha_daf = _mod("homeassistant.data_entry_flow", AbortFlow=_AbortFlow)
+    class _UnknownEntry(RuntimeError):
+        """Stand-in for homeassistant.config_entries.UnknownEntry.
+
+        Raised by `_abort_if_unique_id_mismatch` below when neither
+        `_reconfigure_entry` nor `_reauth_entry` is set, instead of
+        silently returning -- so a future test that forgets to set one of
+        those entries can't pass vacuously.
+        """
+
+    ha_daf = _mod(
+        "homeassistant.data_entry_flow", AbortFlow=_AbortFlow, UnknownEntry=_UnknownEntry
+    )
 
     class _ConfigFlow:
         """Minimal stand-in for homeassistant.config_entries.ConfigFlow."""
@@ -113,7 +124,12 @@ def _stub_homeassistant() -> None:
 
         def _abort_if_unique_id_mismatch(self, reason: str = "unique_id_mismatch") -> None:
             entry = self._reconfigure_entry or self._reauth_entry
-            if entry is not None and entry.unique_id != self.unique_id:
+            if entry is None:
+                raise _UnknownEntry(
+                    "_abort_if_unique_id_mismatch called with neither "
+                    "_reconfigure_entry nor _reauth_entry set"
+                )
+            if entry.unique_id != self.unique_id:
                 raise _AbortFlow(reason)
 
         def async_create_entry(self, *, title, data, **k):
@@ -409,6 +425,12 @@ def _stub_homeassistant() -> None:
     ha_components.binary_sensor = ha_comp_binary_sensor
     ha_components.button = ha_comp_button
     ha_components.diagnostics = ha_comp_diagnostics
+
+    # Exposed as an attribute on the top-level `ha` module too, matching how
+    # e.g. `ha_helpers.selector = ha_selector` exposes `selector` above --
+    # sys.modules registration alone (below) doesn't set this automatically
+    # since these stubs bypass the normal import machinery.
+    ha.data_entry_flow = ha_daf
 
     modules = {
         "homeassistant": ha,

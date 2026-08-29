@@ -205,7 +205,13 @@ class CometConfigFlow(ConfigFlow, domain=DOMAIN):
                 if old_id is None or old_id == old_host:
                     # A host-derived id was never a device identity, so a
                     # host change on such an entry migrates the id instead
-                    # of being rejected as a different device. This
+                    # of being rejected as a different device. This also
+                    # fires when the new host turns out to be a genuinely
+                    # different device that reports a serial -- the entry
+                    # then re-points straight to that device's serial, which
+                    # is accepted for the same reason: a host-derived id
+                    # never carried real device identity, so there's no
+                    # identity to protect by refusing the re-point. This
                     # deliberately skips _abort_if_unique_id_configured: if
                     # the new host happens to belong to an already-
                     # configured (serial-identified) entry, that collision

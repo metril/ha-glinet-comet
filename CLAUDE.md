@@ -105,10 +105,14 @@ which runs `glkvm` — GL.iNet's fork of PiKVM's `kvmd`.
   the unique id — so `config_flow.py`'s reconfigure step migrates that id
   when the host changes (comparing the entry's pre-update `unique_id` to
   its pre-update `host`, since a host-derived id was never a real device
-  identity) instead of aborting with `unique_id_mismatch`. Deliberately
-  skips `_abort_if_unique_id_configured` on that path — pointing a
-  host-fallback entry at an already-configured serial is an accepted,
-  unhandled edge case.
+  identity) instead of aborting with `unique_id_mismatch`. The same branch
+  also fires when the new host turns out to be a genuinely different device
+  that reports a serial — a host-fallback entry then migrates straight to
+  that device's serial-derived id; accepted for the same reason, since a
+  host-derived id never carried real device identity in the first place.
+  Deliberately skips `_abort_if_unique_id_configured` on that path —
+  pointing a host-fallback entry at an already-configured serial is an
+  accepted, unhandled edge case.
 
 ## Conventions
 
