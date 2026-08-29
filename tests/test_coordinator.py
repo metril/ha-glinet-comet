@@ -161,7 +161,7 @@ class FakeClient:
     async def get_upgrade_compare(self):
         return await self._call("get_upgrade_compare", dict(UPGRADE_COMPARE_RESULT))
 
-    async def connect_ws(self):
+    async def connect_ws(self, stream: bool = True):
         ws = self.ws_sequence.pop(0) if self.ws_sequence else self.ws_to_return
         return await self._call("connect_ws", ws)
 

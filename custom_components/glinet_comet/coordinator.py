@@ -32,8 +32,10 @@ from .api import (
     CometRateLimitError,
 )
 from .const import (
+    CONF_KEEP_VIDEO_ACTIVE,
     CONF_SCAN_INTERVAL,
     CONF_WS_RECONNECT_DELAY,
+    DEFAULT_KEEP_VIDEO_ACTIVE,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_WS_RECONNECT_DELAY,
     DOMAIN,
@@ -72,6 +74,9 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         self.client = client
         self.entry = entry
+        self._keep_video_active = entry.options.get(
+            CONF_KEEP_VIDEO_ACTIVE, DEFAULT_KEEP_VIDEO_ACTIVE
+        )
         self._ws: aiohttp.ClientWebSocketResponse | None = None
         self._ws_task: asyncio.Task[None] | None = None
         self._first_run = True
@@ -289,7 +294,7 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         that dies mid-listen from a raised exception still counts as "had a
         previous connection" for the next reconnect attempt.
         """
-        self._ws = await self.client.connect_ws()
+        self._ws = await self.client.connect_ws(stream=self._keep_video_active)
         reconnect = self._ws_has_connected_once
         self._ws_has_connected_once = True
         self._set_ws_connected(True)
