@@ -114,6 +114,7 @@ class FakeClient:
         self.calls: dict[str, int] = {}
         self._raise_always: dict[str, Exception] = {}
         self.ws_to_return: object | None = None
+        self.ws_sequence: list = []
 
     def fail_always(self, name: str, exc: Exception) -> None:
         self._raise_always[name] = exc
@@ -161,7 +162,8 @@ class FakeClient:
         return await self._call("get_upgrade_compare", dict(UPGRADE_COMPARE_RESULT))
 
     async def connect_ws(self):
-        return await self._call("connect_ws", self.ws_to_return)
+        ws = self.ws_sequence.pop(0) if self.ws_sequence else self.ws_to_return
+        return await self._call("connect_ws", ws)
 
 
 class FakeEntry:
@@ -209,6 +211,28 @@ class FakeWS:
         if not self._messages:
             raise StopAsyncIteration
         return self._messages.pop(0)
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+class FakeWSRaisingAfterOne:
+    """Fake WS that yields one message, then raises mid-iteration (a drop)."""
+
+    def __init__(self, message: FakeWSMsg, exc: Exception) -> None:
+        self._message = message
+        self._exc = exc
+        self._yielded = False
+        self.closed = False
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if not self._yielded:
+            self._yielded = True
+            return self._message
+        raise self._exc
 
     async def close(self) -> None:
         self.closed = True
@@ -268,6 +292,43 @@ async def test_second_update_does_not_repeat_bootstrap_only_reads():
     # atx/info are polled every cycle
     assert client.calls["get_atx"] == 2
     assert client.calls["get_info_system"] == 2
+
+
+@pytest.mark.asyncio
+async def test_first_run_bootstrap_retried_after_first_cycle_failure():
+    """A core failure on cycle 1 must not consume the first-run bootstrap flag.
+
+    Regression for: `_first_run` used to be flipped to False up front, before
+    the gather/error checks. If the very first cycle raised (any core read
+    failing, rate limit, auth), the hid/msd/streamer/gpio results from that
+    cycle were discarded along with everything else, but the flag was already
+    spent -- so those subsystems would never be bootstrapped again for the
+    life of the coordinator. The flag must only be marked consumed once a
+    cycle actually succeeds.
+    """
+    client = FakeClient()
+    client.fail_always("get_atx", CometConnectionError("down"))
+    coord = make_coordinator(client)
+
+    with pytest.raises(UpdateFailed):
+        await coord._async_update_data()
+
+    # The bootstrap reads ran (gather is concurrent), but the cycle raised
+    # before anything was committed to state.
+    assert client.calls["get_hid"] == 1
+    assert coord._state["hid"] == {}
+
+    client._raise_always.pop("get_atx")  # let the next cycle succeed
+
+    state = await coord._async_update_data()
+
+    # Bootstrap was retried, not silently skipped forever.
+    assert client.calls["get_hid"] == 2
+    assert client.calls["get_msd"] == 2
+    assert client.calls["get_streamer"] == 2
+    assert client.calls["get_gpio"] == 2
+    assert state["hid"]["connected"] is True
+    assert state["msd"]["drive"]["cdrom"] is True
 
 
 # --- (b) optional read failure -> unsupported, skipped next cycle -----------
@@ -413,7 +474,7 @@ async def test_ws_path_uses_update_listeners_not_set_updated_data():
         side_effect=AssertionError("must never call async_set_updated_data from the WS path")
     )
 
-    await coord._ws_connect_and_listen(False)
+    await coord._ws_connect_and_listen()
 
     assert len(update_listener_calls) >= 2  # ws_connected=True push + atx event push
     assert coord.data["atx"]["busy"] is True
@@ -516,18 +577,66 @@ async def test_ws_loop_generic_error_uses_configured_reconnect_delay(monkeypatch
     assert coord.entry.async_start_reauth_calls == 0
 
 
+@pytest.mark.asyncio
+async def test_ws_reconnect_after_mid_listen_error_triggers_refresh(monkeypatch):
+    """A connection that dies mid-listen (not via a clean CLOSE) still counts
+    as "had a previous connection" -- the next reconnect must still trigger
+    `async_request_refresh`. Regression for `had_connection` only being set
+    in the loop's clean-exit branch.
+    """
+    client = FakeClient()
+    first_ws = FakeWSRaisingAfterOne(
+        FakeWSMsg(aiohttp.WSMsgType.TEXT, {"event_type": "atx", "event": {"busy": True}}),
+        CometConnectionError("dropped"),
+    )
+    second_ws = FakeWS([FakeWSMsg(aiohttp.WSMsgType.CLOSED)])
+    client.ws_sequence = [first_ws, second_ws]
+    coord = make_coordinator(client)
+
+    refresh_calls: list[bool] = []
+
+    async def fake_refresh():
+        refresh_calls.append(True)
+
+    coord.async_request_refresh = fake_refresh
+
+    sleep_calls: list[float] = []
+
+    async def fake_sleep(seconds):
+        sleep_calls.append(seconds)
+        if len(sleep_calls) >= 2:
+            raise asyncio.CancelledError()
+
+    monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+
+    with pytest.raises(asyncio.CancelledError):
+        await coord._ws_loop()
+
+    assert client.calls["connect_ws"] == 2
+    # Exactly once: not on the first-ever connect, but on the reconnect that
+    # follows the mid-listen drop.
+    assert refresh_calls == [True]
+    assert first_ws.closed is True
+    assert second_ws.closed is True
+
+
 # --- async_start / async_stop --------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_async_stop_is_idempotent_and_cancels_before_closing():
+async def test_async_stop_awaits_cancelled_task_before_closing_and_is_idempotent():
     client = FakeClient()
     coord = make_coordinator(client)
     order: list[str] = []
 
-    class _Task:
-        def cancel(self):
-            order.append("cancel")
+    async def _never_ending():
+        try:
+            await asyncio.sleep(3600)
+        except asyncio.CancelledError:
+            # Only recorded once cancellation is actually delivered and
+            # handled -- i.e. once `async_stop` has awaited the task.
+            order.append("task_cancelled")
+            raise
 
     class _WS:
         def __init__(self):
@@ -537,17 +646,24 @@ async def test_async_stop_is_idempotent_and_cancels_before_closing():
             order.append("close")
             self.closed = True
 
-    coord._ws_task = _Task()
+    task = asyncio.ensure_future(_never_ending())
+    # Let the task actually start and reach `await asyncio.sleep(3600)` --
+    # cancelling a task before its first step never runs its body at all
+    # (no try/except), which would make this test pass for the wrong reason.
+    await asyncio.sleep(0)
+    coord._ws_task = task
     coord._ws = _WS()
 
     await coord.async_stop()
-    assert order == ["cancel", "close"]
+
+    assert order == ["task_cancelled", "close"]  # cancelled+awaited BEFORE the socket closes
+    assert task.cancelled()
     assert coord._ws_task is None
     assert coord._ws is None
 
     # Idempotent: calling again is a no-op, no error.
     await coord.async_stop()
-    assert order == ["cancel", "close"]
+    assert order == ["task_cancelled", "close"]
 
 
 # --- entity.py ----------------------------------------------------------------

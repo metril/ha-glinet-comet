@@ -10,6 +10,7 @@ WebSocket event was ever observed live on this firmware.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from collections.abc import Callable
 from datetime import timedelta
@@ -74,6 +75,7 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._ws: aiohttp.ClientWebSocketResponse | None = None
         self._ws_task: asyncio.Task[None] | None = None
         self._first_run = True
+        self._ws_has_connected_once = False
         self._last_upgrade_compare: float | None = None
         self._state: dict[str, Any] = {
             "atx": {},
@@ -113,7 +115,11 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Poll the slow HTTP tier; bootstrap WS-only subsystems on the first run."""
-        first_run, self._first_run = self._first_run, False
+        # Read (don't consume) the flag: if this cycle raises, the bootstrap
+        # reads below are discarded along with everything else, so the next
+        # cycle must retry them rather than skip them forever. It's only
+        # marked done once this cycle actually succeeds (see the `return`).
+        first_run = self._first_run
         unsupported: list[str] = self._state["unsupported"]
 
         core: dict[str, Any] = {
@@ -192,6 +198,7 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         ):
             self._last_upgrade_compare = now
 
+        self._first_run = False
         return dict(self._state)
 
     def _apply_read(self, key: str, result: dict[str, Any]) -> None:
@@ -222,10 +229,12 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
 
     async def async_stop(self) -> None:
-        """Stop the WebSocket loop. Idempotent; cancels the task before closing the socket."""
-        if self._ws_task is not None:
-            self._ws_task.cancel()
-            self._ws_task = None
+        """Stop the WebSocket loop. Idempotent; cancels+awaits the task before closing the socket."""
+        task, self._ws_task = self._ws_task, None
+        if task is not None:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
         if self._ws is not None:
             ws, self._ws = self._ws, None
             if not ws.closed:
@@ -233,10 +242,9 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _ws_loop(self) -> None:
         """Connect to the WebSocket event stream and reconnect on any drop."""
-        had_connection = False
         while True:
             try:
-                await self._ws_connect_and_listen(had_connection)
+                await self._ws_connect_and_listen()
             except asyncio.CancelledError:
                 raise
             except CometAuthError as err:
@@ -265,18 +273,27 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 await asyncio.sleep(delay)
                 continue
             else:
-                had_connection = True
                 self._set_ws_connected(False)
                 delay = self.entry.options.get(
                     CONF_WS_RECONNECT_DELAY, DEFAULT_WS_RECONNECT_DELAY
                 )
                 await asyncio.sleep(delay)
 
-    async def _ws_connect_and_listen(self, had_connection: bool) -> None:
-        """Connect once and process events until the socket drops."""
+    async def _ws_connect_and_listen(self) -> None:
+        """Connect once and process events until the socket drops.
+
+        ``async_request_refresh`` is triggered on every connect after the
+        first one ever made by this coordinator instance -- tracked via
+        ``_ws_has_connected_once``, flipped right after a successful
+        ``connect_ws()`` (not after the message loop exits), so a connection
+        that dies mid-listen from a raised exception still counts as "had a
+        previous connection" for the next reconnect attempt.
+        """
         self._ws = await self.client.connect_ws()
+        reconnect = self._ws_has_connected_once
+        self._ws_has_connected_once = True
         self._set_ws_connected(True)
-        if had_connection:
+        if reconnect:
             await self.async_request_refresh()
         try:
             async for msg in self._ws:
