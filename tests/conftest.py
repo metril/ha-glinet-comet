@@ -76,12 +76,115 @@ def _stub_homeassistant() -> None:
         SupportsResponse=_SupportsResponse,
         callback=lambda f: f,
     )
+    _UNSET = object()
+
+    class _AbortFlow(Exception):
+        """Stand-in for homeassistant.data_entry_flow.AbortFlow."""
+
+        def __init__(self, reason: str, description_placeholders=None) -> None:
+            self.reason = reason
+            self.description_placeholders = description_placeholders
+            super().__init__(reason)
+
+    ha_daf = _mod("homeassistant.data_entry_flow", AbortFlow=_AbortFlow)
+
+    class _ConfigFlow:
+        """Minimal stand-in for homeassistant.config_entries.ConfigFlow."""
+
+        def __init_subclass__(cls, domain=None, **k) -> None:
+            super().__init_subclass__(**k)
+            cls.domain = domain
+
+        def __init__(self, *a, **k) -> None:
+            self.hass = None
+            self.context: dict = {}
+            self.unique_id = None
+            self._configured_unique_ids: set = set()
+            self._reauth_entry = None
+            self._reconfigure_entry = None
+
+        async def async_set_unique_id(self, unique_id, raise_on_progress=True):
+            self.unique_id = unique_id
+            return None
+
+        def _abort_if_unique_id_configured(self) -> None:
+            if self.unique_id in self._configured_unique_ids:
+                raise _AbortFlow("already_configured")
+
+        def _abort_if_unique_id_mismatch(self, reason: str = "unique_id_mismatch") -> None:
+            entry = self._reconfigure_entry or self._reauth_entry
+            if entry is not None and entry.unique_id != self.unique_id:
+                raise _AbortFlow(reason)
+
+        def async_create_entry(self, *, title, data, **k):
+            return {"type": "create_entry", "title": title, "data": data}
+
+        def async_show_form(
+            self, *, step_id, data_schema=None, errors=None, description_placeholders=None, **k
+        ):
+            return {
+                "type": "form",
+                "step_id": step_id,
+                "data_schema": data_schema,
+                "errors": errors or {},
+                "description_placeholders": description_placeholders or {},
+            }
+
+        def async_abort(self, *, reason, **k):
+            return {"type": "abort", "reason": reason}
+
+        def async_update_reload_and_abort(
+            self,
+            entry,
+            *,
+            data=_UNSET,
+            unique_id=_UNSET,
+            reason: str = "reconfigure_successful",
+            **k,
+        ):
+            if data is not _UNSET:
+                entry.data = data
+            if unique_id is not _UNSET:
+                entry.unique_id = unique_id
+            return {
+                "type": "abort",
+                "reason": reason,
+                "data": entry.data,
+                "unique_id": entry.unique_id,
+            }
+
+        def _get_reauth_entry(self):
+            return self._reauth_entry
+
+        def _get_reconfigure_entry(self):
+            return self._reconfigure_entry
+
+    class _OptionsFlow:
+        """Minimal stand-in for homeassistant.config_entries.OptionsFlow."""
+
+        def __init__(self, *a, **k) -> None:
+            self.config_entry = None
+
+        def async_create_entry(self, *, title, data, **k):
+            return {"type": "create_entry", "title": title, "data": data}
+
+        def async_show_form(
+            self, *, step_id, data_schema=None, errors=None, description_placeholders=None, **k
+        ):
+            return {
+                "type": "form",
+                "step_id": step_id,
+                "data_schema": data_schema,
+                "errors": errors or {},
+                "description_placeholders": description_placeholders or {},
+            }
+
     ha_ce = _mod(
         "homeassistant.config_entries",
         ConfigEntry=MagicMock,
-        ConfigFlow=object,
+        ConfigFlow=_ConfigFlow,
         ConfigFlowResult=dict,
-        OptionsFlow=object,
+        OptionsFlow=_OptionsFlow,
     )
 
     class _Platform:
@@ -187,11 +290,30 @@ def _stub_homeassistant() -> None:
 
     ha_entity = _mod("homeassistant.helpers.entity", Entity=_Entity)
 
+    class _NumberSelectorConfig:
+        def __init__(self, *a, **k) -> None:
+            pass
+
+    class _NumberSelector:
+        def __init__(self, *a, **k) -> None:
+            pass
+
+    class _NumberSelectorMode:
+        SLIDER = "slider"
+
+    ha_selector = _mod(
+        "homeassistant.helpers.selector",
+        NumberSelector=_NumberSelector,
+        NumberSelectorConfig=_NumberSelectorConfig,
+        NumberSelectorMode=_NumberSelectorMode,
+    )
+
     ha_helpers.update_coordinator = ha_uc
     ha_helpers.aiohttp_client = ha_ac
     ha_helpers.config_validation = ha_cv
     ha_helpers.device_registry = ha_dr
     ha_helpers.event = ha_evt
+    ha_helpers.selector = ha_selector
     ha_helpers.entity_platform = ha_ep
     ha_helpers.entity = ha_entity
 
@@ -293,6 +415,7 @@ def _stub_homeassistant() -> None:
         "homeassistant.core": ha_core,
         "homeassistant.config_entries": ha_ce,
         "homeassistant.const": ha_const,
+        "homeassistant.data_entry_flow": ha_daf,
         "homeassistant.exceptions": ha_exc,
         "homeassistant.helpers": ha_helpers,
         "homeassistant.helpers.update_coordinator": ha_uc,
@@ -300,6 +423,7 @@ def _stub_homeassistant() -> None:
         "homeassistant.helpers.config_validation": ha_cv,
         "homeassistant.helpers.device_registry": ha_dr,
         "homeassistant.helpers.event": ha_evt,
+        "homeassistant.helpers.selector": ha_selector,
         "homeassistant.helpers.entity_platform": ha_ep,
         "homeassistant.helpers.entity": ha_entity,
         "homeassistant.components": ha_components,
