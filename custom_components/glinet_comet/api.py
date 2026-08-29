@@ -410,8 +410,15 @@ class CometApiClient:
     # --- Upgrade actions ---
 
     async def reboot(self) -> None:
-        """Reboot the Comet."""
-        await self._request("POST", "/api/upgrade/reboot")
+        """Reboot the Comet.
+
+        DESTRUCTIVE: this is a GET-triggered route on the device (glkvm
+        registers it as ``@exposed_http("GET", "/upgrade/reboot")``; POST
+        gets a 405). The handler replies immediately and reboots ~1s later.
+        Never call this from a read/poll path, and never call it against a
+        real device in a test.
+        """
+        await self._request("GET", "/api/upgrade/reboot")
 
     # --- Snapshot ---
 

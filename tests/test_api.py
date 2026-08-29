@@ -284,6 +284,23 @@ async def test_reauth_logs_in_when_token_still_stale():
     assert len(session.requests) == 1
 
 
+# --- Upgrade actions ---
+
+
+@pytest.mark.asyncio
+async def test_reboot_uses_get_not_post():
+    # glkvm registers /upgrade/reboot as @exposed_http("GET", ...); POST 405s.
+    # This must stay GET even though it's a destructive, state-changing call.
+    session = _FakeSession([_login_ok(), _ok({})])
+    client = _client(session)
+
+    await client.reboot()
+
+    method, url, _ = session.requests[-1]
+    assert method == "GET"
+    assert urlsplit(url).path == "/api/upgrade/reboot"
+
+
 # --- Snapshot ---
 
 
