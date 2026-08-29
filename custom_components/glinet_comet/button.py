@@ -105,6 +105,8 @@ async def async_setup_entry(
 
     data = coordinator.data or {}
     for channel, config in parsers.gpio_model_channels(data, "outputs").items():
+        if not isinstance(config, dict):
+            continue
         pulse = config.get("pulse")
         if pulse and config.get("switch") is not True:
             delay = pulse.get("delay", 0) if isinstance(pulse, dict) else 0

@@ -66,10 +66,10 @@ STREAMER_RESULT = {
 }
 GPIO_RESULT = {
     "model": {
-        "scheme": {"inputs": {}, "outputs": {}},
+        "scheme": {"inputs": {}, "outputs": {"out_1": {"switch": True}}},
         "view": {"header": {"title": [{"text": "GPIO", "type": "label"}]}, "table": []},
     },
-    "state": {"inputs": {}, "outputs": {}},
+    "state": {"inputs": {}, "outputs": {"out_1": {"online": True, "state": False}}},
 }
 SYSTEM_SECTION = {
     "kernel": {"machine": "aarch64", "release": "6.1.141"},
@@ -285,7 +285,8 @@ async def test_second_update_does_not_repeat_gpio_bootstrap_only_read():
     await coord._async_update_data()
     await coord._async_update_data()
 
-    # gpio is the only subsystem still bootstrapped once, on first_run only.
+    # gpio is the only subsystem still fetched just once -- its bootstrap
+    # read succeeded on cycle 1, so `_gpio_bootstrapped` suppresses cycle 2.
     assert client.calls["get_gpio"] == 1
     # atx/info/hid/msd/streamer are polled every cycle -- hid/msd/streamer
     # get no WS-pushed writes back (MSD in particular pushes nothing), so
@@ -298,17 +299,18 @@ async def test_second_update_does_not_repeat_gpio_bootstrap_only_read():
 
 
 @pytest.mark.asyncio
-async def test_first_run_bootstrap_retried_after_first_cycle_failure():
-    """A core failure on cycle 1 must not consume the first-run bootstrap flag.
+async def test_gpio_bootstrap_retried_after_first_cycle_failure():
+    """A core failure on cycle 1 must not consume the gpio bootstrap.
 
-    Regression for: `_first_run` used to be flipped to False up front, before
-    the gather/error checks. If the very first cycle raised (any core read
-    failing, rate limit, auth), the gpio bootstrap read from that cycle was
-    discarded along with everything else, but the flag was already spent --
-    so gpio would never be fetched again for the life of the coordinator.
-    The flag must only be marked consumed once a cycle actually succeeds.
+    Regression for: `_first_run` (the old gate) used to be flipped to False
+    up front, before the gather/error checks. If the very first cycle
+    raised (any core read failing, rate limit, auth), the gpio bootstrap
+    read from that cycle was discarded along with everything else, but the
+    flag was already spent -- so gpio would never be fetched again for the
+    life of the coordinator. `_gpio_bootstrapped` is only set once a gpio
+    read actually succeeds, so it can't be spent by an unrelated failure.
     hid/msd/streamer are unaffected either way since they're core reads
-    fetched every cycle regardless of `_first_run`.
+    fetched every cycle regardless of the gpio bootstrap.
     """
     client = FakeClient()
     client.fail_always("get_atx", CometConnectionError("down"))
@@ -332,6 +334,57 @@ async def test_first_run_bootstrap_retried_after_first_cycle_failure():
     assert client.calls["get_streamer"] == 2
     assert client.calls["get_gpio"] == 2
     assert state["hid"]["connected"] is True
+
+
+@pytest.mark.asyncio
+async def test_gpio_bootstrap_retried_after_transient_read_failure():
+    """A retryable gpio-read failure (5xx) must not stall the bootstrap forever.
+
+    Regression for: gpio used to be fetched only on the very first cycle
+    (the old `first_run` flag), which was consumed once that cycle as a
+    whole succeeded -- even if the gpio read itself failed with a transient
+    (non-400/404) status. `gpio_model` would then stay empty for the life
+    of the entry. Now gpio is retried every cycle until its own read
+    succeeds or is marked unsupported (see the 400/404 test below).
+    """
+    client = FakeClient()
+    client.fail_always("get_gpio", CometApiError("HTTP 500: boom", status=500))
+    coord = make_coordinator(client)
+
+    state = await coord._async_update_data()
+
+    assert client.calls["get_gpio"] == 1
+    assert state["gpio_model"] == {"inputs": {}, "outputs": {}}
+    assert "gpio" not in state["unsupported"]
+    assert state["hid"]["connected"] is True  # rest of the cycle still succeeded
+
+    client._raise_always.pop("get_gpio")  # let the retry succeed
+
+    state = await coord._async_update_data()
+
+    assert client.calls["get_gpio"] == 2  # retried, not skipped
+    assert state["gpio_model"]["outputs"] == GPIO_RESULT["model"]["scheme"]["outputs"]
+
+    await coord._async_update_data()
+
+    assert client.calls["get_gpio"] == 2  # bootstrap succeeded, not fetched again
+
+
+@pytest.mark.asyncio
+async def test_gpio_bootstrap_400_marks_unsupported_and_is_skipped_next_cycle():
+    client = FakeClient()
+    client.fail_always("get_gpio", CometApiError("ValidatorError: nope", status=400))
+    coord = make_coordinator(client)
+
+    state = await coord._async_update_data()
+
+    assert "gpio" in state["unsupported"]
+    assert client.calls["get_gpio"] == 1
+    assert state["gpio_model"] == {"inputs": {}, "outputs": {}}
+
+    await coord._async_update_data()
+
+    assert client.calls["get_gpio"] == 1  # not called again
     assert state["msd"]["drive"]["cdrom"] is True
 
 

@@ -6,8 +6,9 @@ over the WebSocket event stream (``/api/ws``); a slow HTTP-poll tier
 (hostname/network/upgrade info) and re-polls ``atx``, ``hid``, ``msd``, and
 ``streamer`` every cycle as a fallback source of truth -- MSD writes in
 particular push nothing back over the WebSocket, so those subsystems can't
-rely on WS push alone. ``gpio`` is still fetched once, on the first run
-only.
+rely on WS push alone. ``gpio`` is bootstrapped once too, but unlike the
+others it's retried every cycle until that bootstrap read either succeeds
+or is marked unsupported, rather than being tied to the very first cycle.
 """
 
 from __future__ import annotations
@@ -82,7 +83,7 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         self._ws: aiohttp.ClientWebSocketResponse | None = None
         self._ws_task: asyncio.Task[None] | None = None
-        self._first_run = True
+        self._gpio_bootstrapped = False
         self._ws_has_connected_once = False
         self._last_upgrade_compare: float | None = None
         self._state: dict[str, Any] = {
@@ -122,21 +123,16 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     # --- Slow HTTP poll tier -------------------------------------------------
 
     async def _async_update_data(self) -> dict[str, Any]:
-        """Poll the slow HTTP tier; bootstrap WS-only subsystems on the first run."""
-        # Read (don't consume) the flag: if this cycle raises, the bootstrap
-        # reads below are discarded along with everything else, so the next
-        # cycle must retry them rather than skip them forever. It's only
-        # marked done once this cycle actually succeeds (see the `return`).
-        first_run = self._first_run
+        """Poll the slow HTTP tier; bootstrap WS-only subsystems as needed."""
         unsupported: list[str] = self._state["unsupported"]
 
         core: dict[str, Any] = {
             "atx": self.client.get_atx(),
             "info_system": self.client.get_info("system"),
-            # hid/msd/streamer are read every cycle, not just bootstrapped on
-            # first_run: no WS event carries hid/msd/streamer writes back
-            # (MSD in particular pushes nothing), so this poll is the only
-            # way state resyncs after one.
+            # hid/msd/streamer are read every cycle, not just bootstrapped
+            # once: no WS event carries hid/msd/streamer writes back (MSD in
+            # particular pushes nothing), so this poll is the only way state
+            # resyncs after one.
             "hid": self.client.get_hid(),
             "msd": self.client.get_msd(),
             "streamer": self.client.get_streamer(),
@@ -162,7 +158,13 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if due_compare:
             add_optional("upgrade_compare", lambda: self.client.get_upgrade_compare())
 
-        if first_run:
+        # gpio is fetched every cycle until its bootstrap read either
+        # succeeds once (the flag then suppresses further fetches -- the
+        # model rarely changes) or is marked unsupported below. Unlike the
+        # old first-run-only gate, this retries a transient bootstrap
+        # failure (5xx/ok:false) instead of leaving gpio_model empty for the
+        # life of the entry.
+        if not self._gpio_bootstrapped:
             add_optional("gpio", lambda: self.client.get_gpio())
 
         keys = [*core.keys(), *optional.keys()]
@@ -201,8 +203,10 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 else:
                     # A transient failure (5xx, ok:false, unparseable body):
                     # don't give up on this field forever, just retry it
-                    # next cycle.
-                    _LOGGER.debug(
+                    # next cycle. The gpio bootstrap is logged louder since
+                    # GPIO entities never get created until it succeeds.
+                    log = _LOGGER.warning if key == "gpio" else _LOGGER.debug
+                    log(
                         "%s read failed (HTTP %s); will retry next cycle",
                         key,
                         result.status,
@@ -213,6 +217,9 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 continue
             self._apply_read(key, result)
 
+        if "gpio" in by_key and not isinstance(by_key["gpio"], BaseException):
+            self._gpio_bootstrapped = True
+
         if (
             due_compare
             and "upgrade_compare" in by_key
@@ -220,7 +227,6 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         ):
             self._last_upgrade_compare = now
 
-        self._first_run = False
         return dict(self._state)
 
     def _apply_read(self, key: str, result: dict[str, Any]) -> None:

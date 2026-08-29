@@ -237,3 +237,24 @@ async def test_setup_entry_creates_only_the_three_existing_switches_from_live_fi
     added = await _setup(_load_fixture("state_live.json"))
     assert len(added) == 3
     assert all(not isinstance(e, CometGpioSwitch) for e in added)
+
+
+@pytest.mark.asyncio
+async def test_setup_entry_skips_non_dict_gpio_output_config():
+    """A non-dict member in gpio_model.outputs (odd firmware) must not crash setup."""
+    data = {
+        "gpio_model": {
+            "outputs": {
+                "bad": None,
+                "out_switch": {"switch": True},
+            }
+        },
+        "gpio": {"outputs": {"out_switch": {"online": True, "state": True}}},
+        "gpio_labels": {},
+    }
+
+    added = await _setup(data)
+
+    gpio_switches = [e for e in added if isinstance(e, CometGpioSwitch)]
+    assert len(gpio_switches) == 1
+    assert gpio_switches[0]._channel == "out_switch"

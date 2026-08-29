@@ -90,6 +90,8 @@ async def async_setup_entry(
 
     data = coordinator.data or {}
     for channel, config in parsers.gpio_model_channels(data, "outputs").items():
+        if not isinstance(config, dict):
+            continue
         if config.get("switch") is True:
             entities.append(CometGpioSwitch(coordinator, entry, channel))
 

@@ -117,3 +117,24 @@ async def test_setup_entry_creates_no_pulse_buttons_from_live_fixture():
     added = await _setup(_load_fixture("state_live.json"))
     pulse_buttons = [e for e in added if isinstance(e, CometGpioPulseButton)]
     assert pulse_buttons == []
+
+
+@pytest.mark.asyncio
+async def test_setup_entry_skips_non_dict_gpio_output_config():
+    """A non-dict member in gpio_model.outputs (odd firmware) must not crash setup."""
+    data = {
+        "gpio_model": {
+            "outputs": {
+                "bad": None,
+                "out_pulse": {"switch": False, "pulse": {"delay": 0.5}},
+            }
+        },
+        "gpio": {"outputs": {"out_pulse": {"online": True, "state": False}}},
+        "gpio_labels": {},
+    }
+
+    added = await _setup(data)
+
+    pulse_buttons = [e for e in added if isinstance(e, CometGpioPulseButton)]
+    assert len(pulse_buttons) == 1
+    assert pulse_buttons[0]._channel == "out_pulse"
