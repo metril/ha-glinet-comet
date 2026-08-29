@@ -108,7 +108,12 @@ def _stub_homeassistant() -> None:
 
     class _DUC(Generic[_T]):
         def __init__(self, hass=None, logger=None, *, name="", update_interval=None, **k):
+            self.hass = hass
+            self.logger = logger
+            self.name = name
+            self.update_interval = update_interval
             self.data = None
+            self.last_update_success = True
 
         def __init_subclass__(cls, **k):
             super().__init_subclass__()
@@ -119,12 +124,22 @@ def _stub_homeassistant() -> None:
         def async_set_updated_data(self, data) -> None:
             self.data = data
 
+        async def async_request_refresh(self) -> None:
+            pass
+
     class _CE(Generic[_T]):
         def __init__(self, coordinator=None, **k):
             self.coordinator = coordinator
 
         def __init_subclass__(cls, **k):
             super().__init_subclass__()
+
+        @property
+        def available(self) -> bool:
+            coordinator = self.coordinator
+            if coordinator is None:
+                return True
+            return getattr(coordinator, "last_update_success", True)
 
     ha_uc = _mod(
         "homeassistant.helpers.update_coordinator",
