@@ -785,6 +785,19 @@ def test_gpio_pulse_capable_non_dict_config():
     assert parsers.gpio_pulse_capable("garbage") is False
 
 
+def test_gpio_pulse_capable_empty_dict_not_capable():
+    assert parsers.gpio_pulse_capable({}) is False
+
+
+def test_gpio_pulse_capable_missing_delay_not_capable():
+    assert parsers.gpio_pulse_capable({"max_delay": 5.0}) is False
+
+
+def test_gpio_pulse_capable_non_numeric_delay_not_capable():
+    assert parsers.gpio_pulse_capable({"delay": None}) is False
+    assert parsers.gpio_pulse_capable({"delay": True}) is False
+
+
 def test_gpio_pulse_delay_present():
     assert parsers.gpio_pulse_delay({"delay": 0.5, "max_delay": 5.0}) == 0.5
 

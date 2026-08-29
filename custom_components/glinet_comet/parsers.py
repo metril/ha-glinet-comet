@@ -387,12 +387,16 @@ def gpio_pulse_capable(config: Any) -> bool:
 
     ``config`` is the value of a channel's ``pulse`` key in ``gpio_model``.
     Upstream kvmd always emits ``pulse: {delay, min_delay, max_delay}`` on
-    outputs, and its UI treats ``max_delay == 0`` as "pulse disabled" for
-    that channel. A missing/``None`` ``max_delay`` is treated as capable
-    (older firmware may omit it); an explicit non-positive or non-numeric
-    ``max_delay`` disables the button.
+    outputs, so an empty or ``delay``-less dict is malformed, not a real
+    "pulse enabled" config -- not capable. Its UI treats ``max_delay == 0``
+    as "pulse disabled" for that channel. A missing/``None`` ``max_delay``
+    is treated as capable (older firmware may omit it); an explicit
+    non-positive or non-numeric ``max_delay`` disables the button.
     """
     if not isinstance(config, dict):
+        return False
+    delay = config.get("delay")
+    if isinstance(delay, bool) or not isinstance(delay, (int, float)):
         return False
     max_delay = config.get("max_delay")
     if max_delay is None:
