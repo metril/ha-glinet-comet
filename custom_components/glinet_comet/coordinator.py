@@ -6,9 +6,11 @@ over the WebSocket event stream (``/api/ws``); a slow HTTP-poll tier
 (hostname/network/upgrade info) and re-polls ``atx``, ``hid``, ``msd``, and
 ``streamer`` every cycle as a fallback source of truth -- MSD writes in
 particular push nothing back over the WebSocket, so those subsystems can't
-rely on WS push alone. ``gpio`` is bootstrapped once too, but unlike the
-others it's retried every cycle until that bootstrap read either succeeds
-or is marked unsupported, rather than being tied to the very first cycle.
+rely on WS push alone. ``gpio`` is polled every cycle too, just like
+``atx`` -- no WS ``gpio`` event has ever carried a full model, so this poll
+is the only source of new/changed channels; ``_process_gpio_full``
+re-derives ``gpio``/``gpio_model``/``gpio_labels`` from scratch on every
+successful read.
 """
 
 from __future__ import annotations
@@ -83,7 +85,7 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         self._ws: aiohttp.ClientWebSocketResponse | None = None
         self._ws_task: asyncio.Task[None] | None = None
-        self._gpio_bootstrapped = False
+        self._gpio_read_warned = False
         self._ws_has_connected_once = False
         self._last_upgrade_compare: float | None = None
         self._state: dict[str, Any] = {
@@ -149,6 +151,10 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         add_optional("hostname", lambda: self.client.get_hostname())
         add_optional("network", lambda: self.client.get_network_config())
         add_optional("upgrade_version", lambda: self.client.get_upgrade_version())
+        # gpio is polled every cycle, same as atx/hid/msd/streamer: it's the
+        # only source of new or changed channels (see the module docstring),
+        # so a one-shot bootstrap would never notice a channel added later.
+        add_optional("gpio", lambda: self.client.get_gpio())
 
         now = monotonic()
         due_compare = (
@@ -157,15 +163,6 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         if due_compare:
             add_optional("upgrade_compare", lambda: self.client.get_upgrade_compare())
-
-        # gpio is fetched every cycle until its bootstrap read either
-        # succeeds once (the flag then suppresses further fetches -- the
-        # model rarely changes) or is marked unsupported below. Unlike the
-        # old first-run-only gate, this retries a transient bootstrap
-        # failure (5xx/ok:false) instead of leaving gpio_model empty for the
-        # life of the entry.
-        if not self._gpio_bootstrapped:
-            add_optional("gpio", lambda: self.client.get_gpio())
 
         keys = [*core.keys(), *optional.keys()]
         results = await asyncio.gather(
@@ -203,9 +200,16 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 else:
                     # A transient failure (5xx, ok:false, unparseable body):
                     # don't give up on this field forever, just retry it
-                    # next cycle. The gpio bootstrap is logged louder since
-                    # GPIO entities never get created until it succeeds.
-                    log = _LOGGER.warning if key == "gpio" else _LOGGER.debug
+                    # next cycle. gpio flap (a WS-only device dropping its
+                    # GPIO daemon momentarily, etc.) is warned once and then
+                    # downgraded to debug until a read actually succeeds
+                    # again, so a flapping subsystem doesn't spam the log
+                    # every cycle -- see ``_gpio_read_warned`` below.
+                    if key == "gpio" and not self._gpio_read_warned:
+                        log = _LOGGER.warning
+                        self._gpio_read_warned = True
+                    else:
+                        log = _LOGGER.debug
                     log(
                         "%s read failed (HTTP %s); will retry next cycle",
                         key,
@@ -218,7 +222,7 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._apply_read(key, result)
 
         if "gpio" in by_key and not isinstance(by_key["gpio"], BaseException):
-            self._gpio_bootstrapped = True
+            self._gpio_read_warned = False
 
         if (
             due_compare
@@ -421,7 +425,17 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         in this shape (a list where a dict is expected, etc.) must not raise
         -- that piece is just treated as empty, and the well-formed pieces
         still land.
+
+        A WS ``gpio`` frame (``_process_gpio_event``) landing between this
+        read and this method's apply is momentarily overwritten by the
+        wholesale replacement below -- harmless, since it self-corrects on
+        the next WS frame or the next slow-tier gpio poll.
         """
+        if not isinstance(event, dict):
+            # The HTTP path (_apply_read) can hand this a non-dict `result`
+            # on odd firmware -- treat it as "nothing to apply" rather than
+            # raising out of the update cycle.
+            return
         model = event.get("model")
         if not isinstance(model, dict):
             model = {}

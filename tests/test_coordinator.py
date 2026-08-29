@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import logging
 import os
 import sys
 from unittest.mock import Mock
@@ -286,15 +287,16 @@ async def test_first_update_bootstraps_all_subsystems_and_returns_schema_keys():
 
 
 @pytest.mark.asyncio
-async def test_second_update_does_not_repeat_gpio_bootstrap_only_read():
+async def test_gpio_is_fetched_every_cycle():
+    """gpio has no one-shot bootstrap any more -- it's polled every cycle,
+    same as atx/hid/msd/streamer, so newly-appeared channels show up without
+    a reload (see gpio.py's dynamic-add helper)."""
     client = FakeClient()
     coord = make_coordinator(client)
     await coord._async_update_data()
     await coord._async_update_data()
 
-    # gpio is the only subsystem still fetched just once -- its bootstrap
-    # read succeeded on cycle 1, so `_gpio_bootstrapped` suppresses cycle 2.
-    assert client.calls["get_gpio"] == 1
+    assert client.calls["get_gpio"] == 2
     # atx/info/hid/msd/streamer are polled every cycle -- hid/msd/streamer
     # get no WS-pushed writes back (MSD in particular pushes nothing), so
     # they can't rely on WS push alone and are re-polled every cycle too.
@@ -306,18 +308,13 @@ async def test_second_update_does_not_repeat_gpio_bootstrap_only_read():
 
 
 @pytest.mark.asyncio
-async def test_gpio_bootstrap_retried_after_first_cycle_failure():
-    """A core failure on cycle 1 must not consume the gpio bootstrap.
+async def test_gpio_retried_after_first_cycle_failure():
+    """A core failure on cycle 1 has no special effect on gpio.
 
-    Regression for: `_first_run` (the old gate) used to be flipped to False
-    up front, before the gather/error checks. If the very first cycle
-    raised (any core read failing, rate limit, auth), the gpio bootstrap
-    read from that cycle was discarded along with everything else, but the
-    flag was already spent -- so gpio would never be fetched again for the
-    life of the coordinator. `_gpio_bootstrapped` is only set once a gpio
-    read actually succeeds, so it can't be spent by an unrelated failure.
-    hid/msd/streamer are unaffected either way since they're core reads
-    fetched every cycle regardless of the gpio bootstrap.
+    gpio is just another every-cycle optional read now (no bootstrap flag to
+    spend or protect), so a core failure elsewhere in the same cycle (which
+    discards the whole cycle's results) behaves exactly like it does for
+    hid/msd/streamer: the next cycle just fetches it again.
     """
     client = FakeClient()
     client.fail_always("get_atx", CometConnectionError("down"))
@@ -326,33 +323,30 @@ async def test_gpio_bootstrap_retried_after_first_cycle_failure():
     with pytest.raises(UpdateFailed):
         await coord._async_update_data()
 
-    # All core reads ran (gather is concurrent), but the cycle raised before
-    # anything was committed to state.
+    # All core/optional reads ran (gather is concurrent), but the cycle
+    # raised before anything was committed to state.
     assert client.calls["get_hid"] == 1
+    assert client.calls["get_gpio"] == 1
     assert coord._state["hid"] == {}
 
     client._raise_always.pop("get_atx")  # let the next cycle succeed
 
     state = await coord._async_update_data()
 
-    # gpio's bootstrap was retried, not silently skipped forever.
     assert client.calls["get_hid"] == 2
     assert client.calls["get_msd"] == 2
     assert client.calls["get_streamer"] == 2
     assert client.calls["get_gpio"] == 2
     assert state["hid"]["connected"] is True
+    # A later-appearing gpio_model is applied once the read succeeds.
+    assert state["gpio_model"]["outputs"] == GPIO_RESULT["model"]["scheme"]["outputs"]
 
 
 @pytest.mark.asyncio
-async def test_gpio_bootstrap_retried_after_transient_read_failure():
-    """A retryable gpio-read failure (5xx) must not stall the bootstrap forever.
-
-    Regression for: gpio used to be fetched only on the very first cycle
-    (the old `first_run` flag), which was consumed once that cycle as a
-    whole succeeded -- even if the gpio read itself failed with a transient
-    (non-400/404) status. `gpio_model` would then stay empty for the life
-    of the entry. Now gpio is retried every cycle until its own read
-    succeeds or is marked unsupported (see the 400/404 test below).
+async def test_gpio_retried_every_cycle_after_transient_read_failure():
+    """A retryable gpio-read failure (5xx) is retried next cycle, like any
+    other optional read -- and unlike the old bootstrap-once design, a
+    later success doesn't stop gpio from being fetched again afterwards.
     """
     client = FakeClient()
     client.fail_always("get_gpio", CometApiError("HTTP 500: boom", status=500))
@@ -374,7 +368,64 @@ async def test_gpio_bootstrap_retried_after_transient_read_failure():
 
     await coord._async_update_data()
 
-    assert client.calls["get_gpio"] == 2  # bootstrap succeeded, not fetched again
+    assert client.calls["get_gpio"] == 3  # fetched every cycle, even after success
+
+
+def _gpio_records(caplog):
+    return [r for r in caplog.records if r.name.endswith("coordinator") and "gpio" in r.getMessage()]
+
+
+@pytest.mark.asyncio
+async def test_gpio_first_transient_failure_warns(caplog):
+    client = FakeClient()
+    client.fail_always("get_gpio", CometApiError("HTTP 500: boom", status=500))
+    coord = make_coordinator(client)
+
+    with caplog.at_level(logging.DEBUG, logger="custom_components.glinet_comet.coordinator"):
+        await coord._async_update_data()
+
+    records = _gpio_records(caplog)
+    assert len(records) == 1
+    assert records[0].levelno == logging.WARNING
+
+
+@pytest.mark.asyncio
+async def test_gpio_second_consecutive_failure_is_debug_only(caplog):
+    client = FakeClient()
+    client.fail_always("get_gpio", CometApiError("HTTP 500: boom", status=500))
+    coord = make_coordinator(client)
+
+    await coord._async_update_data()  # first failure -- warns, consumed above
+    caplog.clear()
+
+    with caplog.at_level(logging.DEBUG, logger="custom_components.glinet_comet.coordinator"):
+        await coord._async_update_data()  # second consecutive failure
+
+    records = _gpio_records(caplog)
+    assert len(records) == 1
+    assert records[0].levelno == logging.DEBUG
+
+
+@pytest.mark.asyncio
+async def test_gpio_warns_again_after_success_then_failure(caplog):
+    client = FakeClient()
+    client.fail_always("get_gpio", CometApiError("HTTP 500: boom", status=500))
+    coord = make_coordinator(client)
+
+    await coord._async_update_data()  # failure 1 -- warns, sets the flag
+
+    client._raise_always.pop("get_gpio")
+    await coord._async_update_data()  # success -- resets the warned flag
+
+    client.fail_always("get_gpio", CometApiError("HTTP 500: boom again", status=500))
+    caplog.clear()
+
+    with caplog.at_level(logging.DEBUG, logger="custom_components.glinet_comet.coordinator"):
+        await coord._async_update_data()  # failure 2 -- warns again
+
+    records = _gpio_records(caplog)
+    assert len(records) == 1
+    assert records[0].levelno == logging.WARNING
 
 
 @pytest.mark.asyncio
@@ -618,6 +669,24 @@ def test_process_gpio_full_handles_null_state_outputs():
         "outputs": {},
     }
     assert coord._state["gpio_model"]["inputs"] == {"in_1": {}}
+
+
+def test_process_gpio_full_ignores_non_dict_event():
+    """The HTTP path (_apply_read) can hand this a non-dict `result` on odd
+    firmware -- must not raise, and must leave existing gpio state alone."""
+    coord = make_coordinator(FakeClient())
+    coord._state["gpio"] = {"inputs": {"in_1": {"online": True, "state": True}}, "outputs": {}}
+    coord._state["gpio_model"] = {"inputs": {"in_1": {}}, "outputs": {}}
+    coord._state["gpio_labels"] = {"in_1": "Door Sensor"}
+    before_gpio = dict(coord._state["gpio"])
+    before_model = dict(coord._state["gpio_model"])
+    before_labels = dict(coord._state["gpio_labels"])
+
+    coord._process_gpio_full(["not", "a", "dict"])
+
+    assert coord._state["gpio"] == before_gpio
+    assert coord._state["gpio_model"] == before_model
+    assert coord._state["gpio_labels"] == before_labels
 
 
 def test_unknown_event_type_is_ignored():
