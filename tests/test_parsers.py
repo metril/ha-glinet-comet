@@ -36,6 +36,11 @@ def active() -> dict:
     return _load("state_streamer_active.json")
 
 
+@pytest.fixture(scope="module")
+def gpio() -> dict:
+    return _load("state_gpio.json")
+
+
 # --- Device identity (pre-existing; sanity-check fixtures wire up cleanly) --
 
 
@@ -636,3 +641,95 @@ def test_firmware_compare_error_empty():
 def test_firmware_compare_error_wrong_type():
     state = {"glinet": {"upgrade_compare": {"error": 123}}}
     assert parsers.firmware_compare_error(state) is None
+
+
+# --- ATX HDD LED ------------------------------------------------------------
+
+
+def test_atx_hdd_active(live):
+    assert parsers.atx_hdd_active(live) is False
+
+
+def test_atx_hdd_active_empty():
+    assert parsers.atx_hdd_active({}) is None
+
+
+def test_atx_hdd_active_wrong_type():
+    assert parsers.atx_hdd_active({"atx": {"leds": {"hdd": "yes"}}}) is None
+
+
+# --- GPIO ---------------------------------------------------------------
+
+
+def test_gpio_channel_input(gpio):
+    assert parsers.gpio_channel(gpio, "inputs", "in_1") == {
+        "online": True,
+        "state": True,
+    }
+
+
+def test_gpio_channel_output(gpio):
+    assert parsers.gpio_channel(gpio, "outputs", "out_switch") == {
+        "online": True,
+        "state": True,
+    }
+
+
+def test_gpio_channel_empty_on_live(live):
+    assert parsers.gpio_channel(live, "inputs", "in_1") == {}
+
+
+def test_gpio_channel_unknown_channel(gpio):
+    assert parsers.gpio_channel(gpio, "inputs", "nope") == {}
+
+
+def test_gpio_channel_empty():
+    assert parsers.gpio_channel({}, "inputs", "in_1") == {}
+
+
+def test_gpio_channel_wrong_type(gpio):
+    state = {"gpio": {"inputs": {"in_1": "garbage"}}}
+    assert parsers.gpio_channel(state, "inputs", "in_1") == {}
+
+
+def test_gpio_model_channels_inputs(gpio):
+    assert parsers.gpio_model_channels(gpio, "inputs") == {"in_1": {}, "in_2": {}}
+
+
+def test_gpio_model_channels_outputs(gpio):
+    channels = parsers.gpio_model_channels(gpio, "outputs")
+    assert set(channels) == {"out_switch", "out_pulse", "out_none"}
+    assert channels["out_switch"]["switch"] is True
+
+
+def test_gpio_model_channels_empty_on_live(live):
+    assert parsers.gpio_model_channels(live, "outputs") == {}
+
+
+def test_gpio_model_channels_empty():
+    assert parsers.gpio_model_channels({}, "inputs") == {}
+
+
+def test_gpio_model_channels_wrong_type():
+    state = {"gpio_model": {"inputs": "garbage"}}
+    assert parsers.gpio_model_channels(state, "inputs") == {}
+
+
+def test_gpio_display_name_labeled(gpio):
+    labels = gpio["gpio_labels"]
+    assert parsers.gpio_display_name("in_1", labels) == "Door Sensor"
+    assert parsers.gpio_display_name("out_switch", labels) == "Relay 1"
+
+
+def test_gpio_display_name_falls_back_to_title_case(gpio):
+    labels = gpio["gpio_labels"]
+    assert parsers.gpio_display_name("in_2", labels) == "In 2"
+    assert parsers.gpio_display_name("out_pulse", labels) == "Out Pulse"
+
+
+def test_gpio_display_name_empty_labels():
+    assert parsers.gpio_display_name("out_none", {}) == "Out None"
+
+
+def test_gpio_display_name_missing_labels_dict():
+    assert parsers.gpio_display_name("out_none", None) == "Out None"

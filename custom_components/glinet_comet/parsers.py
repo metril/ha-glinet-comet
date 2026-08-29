@@ -114,6 +114,11 @@ def atx_power_on(data: dict[str, Any]) -> bool | None:
     return value == "on"
 
 
+def atx_hdd_active(data: dict[str, Any]) -> bool | None:
+    """Return whether the ATX HDD activity LED is lit."""
+    return _as_bool(_dig(data, "atx.leds.hdd"))
+
+
 # --- Video / streamer -----------------------------------------------------
 # ``streamer.streamer`` is the live subsystem snapshot and can be ``null``
 # (streamer subsystem down/idle) -- every helper here must null-check it.
@@ -352,3 +357,32 @@ def firmware_release_notes(data: dict[str, Any]) -> str | None:
 def firmware_compare_error(data: dict[str, Any]) -> str | None:
     """Return the error reported by the last upgrade-compare check, if any."""
     return _as_str(_dig(data, "glinet.upgrade_compare.error"))
+
+
+# --- GPIO ---------------------------------------------------------------
+
+
+def gpio_channel(data: dict[str, Any], kind: str, channel: str) -> dict[str, Any]:
+    """Return the live state dict for one GPIO channel (``{}`` on miss)."""
+    value = _dig(data, f"gpio.{kind}.{channel}")
+    return value if isinstance(value, dict) else {}
+
+
+def gpio_model_channels(data: dict[str, Any], kind: str) -> dict[str, Any]:
+    """Return the ``gpio_model.<kind>`` channel-definition dict (``{}`` on miss)."""
+    value = _dig(data, f"gpio_model.{kind}")
+    return value if isinstance(value, dict) else {}
+
+
+def gpio_display_name(channel: str, labels: dict[str, Any] | None) -> str:
+    """Return the user-facing label for a GPIO channel.
+
+    Prefers ``labels[channel]``; falls back to the channel id
+    title-cased with underscores turned to spaces (e.g. ``out_switch`` ->
+    ``"Out Switch"``).
+    """
+    if isinstance(labels, dict):
+        label = _as_str(labels.get(channel))
+        if label is not None:
+            return label
+    return channel.replace("_", " ").title()
