@@ -711,6 +711,88 @@ async def test_first_cycle_core_failure_raises_update_failed():
 
 
 @pytest.mark.asyncio
+async def test_first_cycle_gate_not_relaxed_by_silent_core_exceptions():
+    """A plain (non-CometError) exception on every core read is neither a
+    systemic failure nor a `CometApiError` core_failure, so it's silently
+    skipped by the apply loop and the cycle returns normally -- but nothing
+    actually landed in state. That must not count as "the first successful
+    cycle": a later real core failure still needs to raise strictly, exactly
+    as it would on an untouched fresh coordinator.
+    """
+    client = FakeClient()
+    for name in ("get_atx", "get_info_system", "get_hid", "get_msd", "get_streamer"):
+        client.fail_always(name, RuntimeError("boom"))
+    coord = make_coordinator(client)
+
+    await coord._async_update_data()  # returns normally (today's behavior)
+
+    assert coord._had_successful_cycle is False
+
+    client._raise_always.clear()
+    client.fail_always("get_msd", CometApiError("HTTP 500: boom", status=500))
+
+    with pytest.raises(UpdateFailed):
+        await coord._async_update_data()  # still strict -- gate was never relaxed
+
+
+@pytest.mark.asyncio
+async def test_all_core_reads_failing_message_names_first_key():
+    client = FakeClient()
+    coord = make_coordinator(client)
+    await coord._async_update_data()  # good cycle first
+
+    for name in ("get_atx", "get_info_system", "get_hid", "get_msd", "get_streamer"):
+        client.fail_always(name, CometApiError("HTTP 500: boom", status=500))
+
+    with pytest.raises(UpdateFailed) as exc_info:
+        await coord._async_update_data()
+
+    assert "all core reads failed; atx:" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_four_of_five_core_failures_is_soft():
+    """4 of 5 core reads failing in the same cycle stays soft -- only 5-of-5
+    ("nothing left to report") escalates to a hard failure.
+    """
+    client = FakeClient()
+    coord = make_coordinator(client)
+    await coord._async_update_data()  # good cycle first
+
+    for name in ("get_atx", "get_info_system", "get_hid", "get_msd"):
+        client.fail_always(name, CometApiError("HTTP 500: boom", status=500))
+
+    state = await coord._async_update_data()  # returns normally, no raise
+
+    assert state["streamer"]["params"]["desired_fps"] == 40  # surviving subsystem applied
+
+
+@pytest.mark.asyncio
+async def test_soft_core_cycle_keeps_last_update_success():
+    """A soft-core-failure cycle must not fail the whole update -- which the
+    real HA `DataUpdateCoordinator` surfaces via `last_update_success`
+    staying True.
+
+    NOTE: the `_DUC` stub in tests/conftest.py sets `last_update_success =
+    True` once in `__init__` and never updates it afterwards (it doesn't
+    wrap `_async_update_data` with the try/except the real coordinator
+    uses), so this attribute can't actually distinguish a soft success from
+    a hard failure in this test harness -- the assertion below is a smoke
+    check on the stub's fixed value, backed by the meaningful check that
+    `_async_update_data` returns normally instead of raising.
+    """
+    client = FakeClient()
+    coord = make_coordinator(client)
+    await coord._async_update_data()  # good cycle first
+
+    client.fail_always("get_msd", CometApiError("HTTP 500: boom", status=500))
+    state = await coord._async_update_data()  # returns normally, doesn't raise
+
+    assert state is not None
+    assert coord.last_update_success is True
+
+
+@pytest.mark.asyncio
 async def test_gpio_warn_reset_survives_a_raising_cycle(caplog):
     client = FakeClient()
     client.fail_always("get_gpio", CometApiError("HTTP 500: boom", status=500))

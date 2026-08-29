@@ -269,7 +269,13 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         ):
             self._last_upgrade_compare = now
 
-        self._had_successful_cycle = True
+        # Only relax the first-cycle gate if a core read actually landed in
+        # state -- a cycle where every core read raised a non-CometError
+        # exception (silently skipped by the apply loop above, since it's
+        # neither a systemic failure nor a CometApiError core_failure) must
+        # not count as "the first successful cycle".
+        if any(not isinstance(by_key[key], BaseException) for key in core):
+            self._had_successful_cycle = True
         return dict(self._state)
 
     def _apply_read(self, key: str, result: dict[str, Any]) -> None:

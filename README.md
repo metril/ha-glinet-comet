@@ -134,9 +134,10 @@ valid for a ±30 second window.
 - **Firmware**: the Firmware update entity is read-only — it shows when
   GL.iNet publishes a newer version; install it from the Comet's own web UI
   (System → Upgrade).
-- **Resilient polling**: a single subsystem read failing no longer makes
+- **Resilient polling**: a single subsystem's API error no longer makes
   every entity unavailable — that subsystem just keeps its last value until
-  the next successful poll.
+  the next successful poll (a connection or auth failure, or every core
+  read failing in the same cycle, still fails the cycle).
 
 ## Not yet supported
 
