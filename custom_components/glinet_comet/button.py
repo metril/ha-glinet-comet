@@ -17,6 +17,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from . import parsers
 from .api import CometApiClient, CometError
 from .const import CONF_ENABLE_ATX, DEFAULT_ENABLE_ATX, DOMAIN
 from .coordinator import CometDataUpdateCoordinator
@@ -101,6 +102,14 @@ async def async_setup_entry(
             entities.append(CometAtxButton(coordinator, entry, description))
         else:
             entities.append(CometButton(coordinator, entry, description))
+
+    data = coordinator.data or {}
+    for channel, config in parsers.gpio_model_channels(data, "outputs").items():
+        pulse = config.get("pulse")
+        if pulse and config.get("switch") is not True:
+            delay = pulse.get("delay", 0) if isinstance(pulse, dict) else 0
+            entities.append(CometGpioPulseButton(coordinator, entry, channel, delay))
+
     async_add_entities(entities)
 
 
@@ -138,3 +147,44 @@ class CometAtxButton(_CometButtonMixin, CometAtxEntity, ButtonEntity):
     Unavailable (in addition to the usual coordinator-unavailable case)
     whenever the device reports no ATX board attached.
     """
+
+
+class CometGpioPulseButton(CometEntity, ButtonEntity):
+    """A GPIO output channel with a pulse config, exposed as a button.
+
+    Only created for outputs that have a ``pulse`` config and aren't already
+    switch-capable (a switch-capable channel is served by ``CometGpioSwitch``
+    instead).
+    """
+
+    _attr_icon = "mdi:gesture-tap-button"
+
+    def __init__(
+        self,
+        coordinator: CometDataUpdateCoordinator,
+        entry: ConfigEntry,
+        channel: str,
+        delay: float,
+    ) -> None:
+        """Initialize the GPIO pulse button."""
+        super().__init__(coordinator, entry)
+        self._channel = channel
+        self._delay = delay
+        self._attr_unique_id = f"{entry.entry_id}_gpio_pulse_{channel}"
+        labels = (coordinator.data or {}).get("gpio_labels")
+        self._attr_name = parsers.gpio_display_name(channel, labels)
+
+    @property
+    def available(self) -> bool:
+        """Return True only if the coordinator is available and the channel is online."""
+        if not super().available or self.coordinator.data is None:
+            return False
+        channel = parsers.gpio_channel(self.coordinator.data, "outputs", self._channel)
+        return channel.get("online") is True
+
+    async def async_press(self) -> None:
+        """Pulse the GPIO output channel."""
+        try:
+            await self.coordinator.client.gpio_pulse(self._channel, self._delay)
+        except CometError as err:
+            raise HomeAssistantError(str(err)) from err
