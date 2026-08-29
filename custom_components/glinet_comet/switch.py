@@ -87,6 +87,12 @@ async def async_setup_entry(
         CometSwitch(coordinator, entry, desc) for desc in SWITCHES
     ]
     entities.append(CometMsdConnectedSwitch(coordinator, entry))
+
+    data = coordinator.data or {}
+    for channel, config in parsers.gpio_model_channels(data, "outputs").items():
+        if config.get("switch") is True:
+            entities.append(CometGpioSwitch(coordinator, entry, channel))
+
     async_add_entities(entities)
 
 
@@ -193,3 +199,55 @@ class CometMsdConnectedSwitch(CometEntity, SwitchEntity):
         if self.coordinator.data is not None:
             _set_msd_drive_connected(self.coordinator.data, False)
             self.coordinator.async_set_updated_data(self.coordinator.data)
+
+
+class CometGpioSwitch(CometEntity, SwitchEntity):
+    """A GPIO output channel exposed as a switch.
+
+    No optimistic update -- the device pushes ``gpio`` WebSocket frames.
+    """
+
+    _attr_icon = "mdi:electric-switch"
+
+    def __init__(
+        self,
+        coordinator: CometDataUpdateCoordinator,
+        entry: ConfigEntry,
+        channel: str,
+    ) -> None:
+        """Initialize the GPIO switch."""
+        super().__init__(coordinator, entry)
+        self._channel = channel
+        self._attr_unique_id = f"{entry.entry_id}_gpio_out_{channel}"
+        labels = (coordinator.data or {}).get("gpio_labels")
+        self._attr_name = parsers.gpio_display_name(channel, labels)
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return the GPIO output state."""
+        if self.coordinator.data is None:
+            return None
+        channel = parsers.gpio_channel(self.coordinator.data, "outputs", self._channel)
+        return channel.get("state")
+
+    @property
+    def available(self) -> bool:
+        """Return True only if the coordinator is available and the channel is online."""
+        if not super().available or self.coordinator.data is None:
+            return False
+        channel = parsers.gpio_channel(self.coordinator.data, "outputs", self._channel)
+        return channel.get("online") is True
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Switch the GPIO output on."""
+        try:
+            await self.coordinator.client.gpio_switch(self._channel, True)
+        except CometError as err:
+            raise HomeAssistantError(str(err)) from err
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Switch the GPIO output off."""
+        try:
+            await self.coordinator.client.gpio_switch(self._channel, False)
+        except CometError as err:
+            raise HomeAssistantError(str(err)) from err
