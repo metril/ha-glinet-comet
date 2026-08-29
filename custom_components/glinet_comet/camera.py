@@ -35,7 +35,6 @@ async def async_setup_entry(
 class CometScreenCamera(CometEntity, Camera):
     """Camera entity exposing a JPEG snapshot of the captured screen."""
 
-    _attr_translation_key = "screen"
     _attr_name = "Screen"
 
     def __init__(

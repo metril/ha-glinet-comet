@@ -35,7 +35,6 @@ async def async_setup_entry(
 class CometFirmwareUpdate(CometEntity, UpdateEntity):
     """Reports the Comet's installed/available firmware version."""
 
-    _attr_translation_key = "firmware"
     _attr_name = "Firmware"
     _attr_device_class = UpdateDeviceClass.FIRMWARE
     _attr_title = "GL.iNet Comet firmware"
