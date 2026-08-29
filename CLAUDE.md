@@ -35,12 +35,16 @@ which runs `glkvm` — GL.iNet's fork of PiKVM's `kvmd`.
   input channel, plus a `switch` per output channel whose model has
   `switch: true` or a `button` per output channel with a `pulse` config
   (`max_delay` missing/`None` or `> 0`; explicit `max_delay: 0` means
-  "pulse disabled" per upstream kvmd) and no switch capability. Names
-  come from the device's GPIO view labels, falling back to a title-cased
-  channel id; entities are unavailable unless the channel reports
-  `online: true`. No optimistic update — the device pushes `gpio` WS
-  frames. `api.py` gained `gpio_switch(channel, state)` /
-  `gpio_pulse(channel, delay)`; `parsers.py` gained `atx_hdd_active`,
+  "pulse disabled" per upstream kvmd) and no switch capability. Only
+  which entity kind a channel gets (switch vs. pulse button vs. skipped)
+  is decided once, at setup; a channel's label and, for a pulse button,
+  its `delay` are read live from `coordinator.data` on every access/press
+  (falling back to a title-cased channel id for the label), so a relabel
+  or a changed delay reaches the entity without a reload. Entities are
+  unavailable unless the channel reports `online: true`. No optimistic
+  update — the device pushes `gpio` WS frames. `api.py` gained
+  `gpio_switch(channel, state)` / `gpio_pulse(channel, delay)`;
+  `parsers.py` gained `atx_hdd_active`,
   `gpio_channel`, `gpio_model_channels`, `gpio_display_name`. `gpio` is
   polled every slow cycle, same as `atx` (see Gotchas); each platform adds
   new channels dynamically via `gpio.py`'s `async_setup_gpio_entities`,
@@ -97,6 +101,14 @@ which runs `glkvm` — GL.iNet's fork of PiKVM's `kvmd`.
   `NEVER_TOUCH` regardless of flags. `api.py`'s `reboot()` uses GET
   deliberately (POST 405s there) — it's only ever invoked by the user
   pressing the Reboot button.
+- On serial-less firmware, `_unique_id_from_info` falls back to `host` as
+  the unique id — so `config_flow.py`'s reconfigure step migrates that id
+  when the host changes (comparing the entry's pre-update `unique_id` to
+  its pre-update `host`, since a host-derived id was never a real device
+  identity) instead of aborting with `unique_id_mismatch`. Deliberately
+  skips `_abort_if_unique_id_configured` on that path — pointing a
+  host-fallback entry at an already-configured serial is an accepted,
+  unhandled edge case.
 
 ## Conventions
 
