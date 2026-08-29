@@ -95,7 +95,11 @@ def _stub_homeassistant() -> None:
         TEXT = "text"
         UPDATE = "update"
 
-    ha_const = _mod("homeassistant.const", Platform=_Platform)
+    class _EntityCategory:
+        CONFIG = "config"
+        DIAGNOSTIC = "diagnostic"
+
+    ha_const = _mod("homeassistant.const", Platform=_Platform, EntityCategory=_EntityCategory)
     ha_exc = _mod(
         "homeassistant.exceptions",
         HomeAssistantError=type("HomeAssistantError", (Exception,), {}),
@@ -204,6 +208,42 @@ def _stub_homeassistant() -> None:
         SwitchEntityDescription=_SwitchEntityDescription,
     )
 
+    @dataclass(frozen=True, kw_only=True)
+    class _BinarySensorEntityDescription(_EntityDescription):
+        pass
+
+    class _BinarySensorEntity:
+        pass
+
+    class _BinarySensorDeviceClass:
+        CONNECTIVITY = "connectivity"
+        POWER = "power"
+        RUNNING = "running"
+
+    ha_comp_binary_sensor = _mod(
+        "homeassistant.components.binary_sensor",
+        BinarySensorEntity=_BinarySensorEntity,
+        BinarySensorEntityDescription=_BinarySensorEntityDescription,
+        BinarySensorDeviceClass=_BinarySensorDeviceClass,
+    )
+
+    @dataclass(frozen=True, kw_only=True)
+    class _ButtonEntityDescription(_EntityDescription):
+        pass
+
+    class _ButtonEntity:
+        pass
+
+    class _ButtonDeviceClass:
+        RESTART = "restart"
+
+    ha_comp_button = _mod(
+        "homeassistant.components.button",
+        ButtonEntity=_ButtonEntity,
+        ButtonEntityDescription=_ButtonEntityDescription,
+        ButtonDeviceClass=_ButtonDeviceClass,
+    )
+
     def _redact(value, to_redact):
         if isinstance(value, dict):
             return {
@@ -227,6 +267,8 @@ def _stub_homeassistant() -> None:
     ha_components = _mod("homeassistant.components")
     ha_components.select = ha_comp_select
     ha_components.switch = ha_comp_switch
+    ha_components.binary_sensor = ha_comp_binary_sensor
+    ha_components.button = ha_comp_button
     ha_components.diagnostics = ha_comp_diagnostics
 
     modules = {
@@ -245,6 +287,8 @@ def _stub_homeassistant() -> None:
         "homeassistant.components": ha_components,
         "homeassistant.components.select": ha_comp_select,
         "homeassistant.components.switch": ha_comp_switch,
+        "homeassistant.components.binary_sensor": ha_comp_binary_sensor,
+        "homeassistant.components.button": ha_comp_button,
         "homeassistant.components.diagnostics": ha_comp_diagnostics,
     }
     for name, module in modules.items():

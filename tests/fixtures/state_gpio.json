@@ -1,0 +1,340 @@
+{
+  "atx": {
+    "busy": false,
+    "enabled": false,
+    "leds": {
+      "hdd": false,
+      "power": false
+    },
+    "power": "off"
+  },
+  "hid": {
+    "busy": false,
+    "connected": true,
+    "enabled": true,
+    "jiggler": {
+      "active": false,
+      "enabled": true,
+      "interval": 20,
+      "schedule": []
+    },
+    "keyboard": {
+      "leds": {
+        "caps": false,
+        "num": false,
+        "scroll": false
+      },
+      "online": true,
+      "outputs": {
+        "active": "",
+        "available": []
+      }
+    },
+    "mouse": {
+      "absolute": true,
+      "online": true,
+      "outputs": {
+        "active": "usb",
+        "available": [
+          "usb",
+          "usb_rel"
+        ]
+      }
+    },
+    "online": true
+  },
+  "msd": {
+    "available_devices": {
+      "/dev/mmcblk0p10": {
+        "filesystem": "exfat",
+        "is_current": true,
+        "label": "GLKVM",
+        "size": 28801204224,
+        "uuid": "<redacted>"
+      }
+    },
+    "busy": false,
+    "drive": {
+      "cdrom": true,
+      "connected": false,
+      "image": null,
+      "rw": false
+    },
+    "drive_partition": {
+      "cdrom": false,
+      "connected": false,
+      "image": null,
+      "rw": true
+    },
+    "enabled": true,
+    "online": false,
+    "storage": {
+      "downloading": null,
+      "images": {},
+      "parts": {
+        "": {
+          "free": 28797403136,
+          "size": 28797599744,
+          "writable": true
+        }
+      },
+      "uploading": null
+    }
+  },
+  "streamer": {
+    "features": {
+      "h264": true,
+      "h265": true,
+      "quality": true,
+      "resolution": false,
+      "venc_mode": true,
+      "zero_delay": true
+    },
+    "limits": {
+      "desired_fps": {
+        "max": 70,
+        "min": 0
+      },
+      "h264_bitrate": {
+        "max": 20000,
+        "min": 0
+      },
+      "h264_gop": {
+        "max": 240,
+        "min": 0
+      }
+    },
+    "params": {
+      "desired_fps": 40,
+      "h264_bitrate": 2000,
+      "h264_gop": 30,
+      "quality": 80,
+      "venc_mode": "normal",
+      "video_format": 0,
+      "zero_delay": true
+    },
+    "snapshot": {
+      "saved": null
+    },
+    "streamer": null
+  },
+  "gpio": {
+    "inputs": {
+      "in_1": {
+        "online": true,
+        "state": true
+      },
+      "in_2": {
+        "online": false,
+        "state": false
+      }
+    },
+    "outputs": {
+      "out_switch": {
+        "online": true,
+        "state": true
+      },
+      "out_pulse": {
+        "online": true,
+        "state": false
+      },
+      "out_none": {
+        "online": true,
+        "state": false
+      }
+    }
+  },
+  "gpio_model": {
+    "inputs": {
+      "in_1": {},
+      "in_2": {}
+    },
+    "outputs": {
+      "out_switch": {
+        "switch": true,
+        "pulse": {
+          "delay": 0.1,
+          "max_delay": 0,
+          "min_delay": 0
+        }
+      },
+      "out_pulse": {
+        "switch": false,
+        "pulse": {
+          "delay": 0.5
+        }
+      },
+      "out_none": {
+        "switch": false
+      }
+    }
+  },
+  "gpio_labels": {
+    "in_1": "Door Sensor",
+    "out_switch": "Relay 1"
+  },
+  "info": {
+    "auth": {
+      "enabled": true
+    },
+    "extras": {
+      "ipmi": {
+        "daemon": "kvmd-ipmi",
+        "description": "Show IPMI information",
+        "enabled": false,
+        "icon": "share/svg/ipmi.svg",
+        "name": "IPMI",
+        "path": "ipmi",
+        "place": 21,
+        "port": 623,
+        "started": false
+      },
+      "janus": {
+        "daemon": "kvmd-janus",
+        "description": "Janus WebRTC Gateway",
+        "enabled": true,
+        "name": "Janus",
+        "path": "janus",
+        "place": -1,
+        "started": true
+      },
+      "janus_static": {
+        "daemon": "kvmd-janus-static",
+        "description": "Janus WebRTC Gateway (Static Config)",
+        "enabled": true,
+        "name": "Janus Static",
+        "path": "janus",
+        "place": -1,
+        "started": true
+      },
+      "media": {
+        "daemon": "kvmd-media",
+        "description": "KVMD Media Proxy",
+        "enabled": true,
+        "name": "Media",
+        "path": "media",
+        "place": -1,
+        "started": true
+      },
+      "pion": {
+        "daemon": "gl-pion",
+        "description": "Pion WebRTC Gateway",
+        "enabled": true,
+        "name": "Pion",
+        "path": "/usr/bin/gl-pion",
+        "place": -1,
+        "started": true
+      },
+      "vnc": {
+        "daemon": "kvmd-vnc",
+        "description": "Show VNC information",
+        "enabled": false,
+        "icon": "share/svg/vnc.svg",
+        "name": "VNC",
+        "path": "vnc",
+        "place": 20,
+        "port": 5900,
+        "started": false
+      },
+      "webrtc": {
+        "daemon": "kvmd-webrtc",
+        "description": "WebRTC Signaling Server",
+        "enabled": true,
+        "name": "WebRTC",
+        "path": "webrtc",
+        "place": -1,
+        "started": true
+      },
+      "webterm": {
+        "daemon": "kvmd-webterm",
+        "description": "Open terminal in a web browser",
+        "enabled": true,
+        "icon": "extras/webterm/terminal.svg",
+        "name": "Terminal",
+        "path": "extras/webterm/ttyd",
+        "place": 10,
+        "started": true
+      }
+    },
+    "meta": {
+      "kvm": {},
+      "server": {
+        "host": "<redacted>"
+      }
+    },
+    "system": {
+      "kernel": {
+        "machine": "aarch64",
+        "release": "6.1.141",
+        "system": "Linux",
+        "version": "#2 SMP Thu May  7 01:28:27 UTC 2026"
+      },
+      "kvmd": {
+        "version": "4.82"
+      },
+      "platform": {
+        "base": "Rockchip RV1126B-P EVB V14 Board",
+        "board": "rpi4",
+        "model": "v3",
+        "serial": "<redacted>",
+        "type": "rpi",
+        "video": "hdmi"
+      },
+      "streamer": {
+        "app": "ustreamer",
+        "features": {
+          "HAS_PDEATHSIG": true,
+          "WITH_GPIO": false,
+          "WITH_PTHREAD_NP": false,
+          "WITH_SETPROCTITLE": true,
+          "WITH_SYSTEMD": false
+        },
+        "version": "6.13"
+      }
+    }
+  },
+  "glinet": {
+    "hostname": {
+      "hostname": "<redacted>",
+      "success": true
+    },
+    "network": {
+      "config": {
+        "dns_servers": [
+          "<redacted>",
+          "<redacted>",
+          "<redacted>"
+        ],
+        "gateway": "<redacted>",
+        "interface": "eth0",
+        "ip_address": "<redacted>",
+        "is_dhcp": true,
+        "mac_address": "<redacted>",
+        "netmask": "<redacted>",
+        "state": "online"
+      },
+      "success": true
+    },
+    "upgrade_version": {
+      "model": "RM1PE",
+      "version": "V1.9.1 release1"
+    },
+    "upgrade_compare": {
+      "beta_error": "Empty Beta list-sha256 response",
+      "beta_release_note": "",
+      "beta_release_note_cn": "",
+      "beta_version": "",
+      "error": null,
+      "local_model": "RM1PE",
+      "local_version": "V1.9.1 release1",
+      "release_note": "## New Features\n\n- Delay mode configuration.",
+      "release_note_cn": "## \u65b0\u589e\u529f\u80fd",
+      "server_model": "RM1PE",
+      "server_version": "V1.9.1 release1"
+    }
+  },
+  "unsupported": [
+    "hw"
+  ],
+  "ws_connected": true
+}
