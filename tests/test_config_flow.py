@@ -216,6 +216,56 @@ async def test_reauth_confirm_invalid_auth_reshows_form(fake_client):
     assert result["errors"]["base"] == "invalid_auth"
 
 
+# --- async_step_reconfigure ---
+
+
+async def test_reconfigure_host_change_same_serial(fake_client):
+    entry = FakeEntry(
+        {CONF_HOST: "10.0.0.5", CONF_USERNAME: "admin", CONF_PASSWORD: "old"},
+        unique_id="SN-1",
+    )
+    flow = config_flow.CometConfigFlow()
+    flow._reconfigure_entry = entry
+    await flow.async_step_reconfigure(
+        {CONF_HOST: "10.0.0.9", CONF_USERNAME: "admin", CONF_PASSWORD: "new"}
+    )
+    assert entry.unique_id == "SN-1"
+    assert entry.data[CONF_HOST] == "10.0.0.9"
+
+
+async def test_reconfigure_host_change_different_serial_aborts(fake_client):
+    fake_client.result = {"system": {"platform": {"serial": "SN-2"}}}
+    entry = FakeEntry(
+        {CONF_HOST: "10.0.0.5", CONF_USERNAME: "admin", CONF_PASSWORD: "old"},
+        unique_id="SN-1",
+    )
+    flow = config_flow.CometConfigFlow()
+    flow._reconfigure_entry = entry
+    with pytest.raises(AbortFlow) as exc_info:
+        await flow.async_step_reconfigure(
+            {CONF_HOST: "10.0.0.9", CONF_USERNAME: "admin", CONF_PASSWORD: "new"}
+        )
+    assert exc_info.value.reason == "unique_id_mismatch"
+
+
+async def test_reconfigure_migrates_host_fallback_unique_id(fake_client):
+    """A host-derived unique id was never a device identity: a host change
+    on such an entry must migrate the id instead of aborting as mismatched.
+    """
+    fake_client.result = {"system": {"platform": {}}}
+    entry = FakeEntry(
+        {CONF_HOST: "10.0.0.5", CONF_USERNAME: "admin", CONF_PASSWORD: "old"},
+        unique_id="10.0.0.5",
+    )
+    flow = config_flow.CometConfigFlow()
+    flow._reconfigure_entry = entry
+    result = await flow.async_step_reconfigure(
+        {CONF_HOST: "10.0.0.9", CONF_USERNAME: "admin", CONF_PASSWORD: "new"}
+    )
+    assert result["type"] == "abort"
+    assert entry.unique_id == "10.0.0.9"
+
+
 # --- options flow ---
 
 

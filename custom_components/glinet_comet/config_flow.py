@@ -198,7 +198,23 @@ class CometConfigFlow(ConfigFlow, domain=DOMAIN):
                 description_placeholders = extra
             else:
                 host = user_input[CONF_HOST]
-                await self.async_set_unique_id(_unique_id_from_info(extra, host))
+                new_unique_id = _unique_id_from_info(extra, host)
+                old_id = reconfigure_entry.unique_id
+                old_host = reconfigure_entry.data.get(CONF_HOST)
+                await self.async_set_unique_id(new_unique_id)
+                if old_id is None or old_id == old_host:
+                    # A host-derived id was never a device identity, so a
+                    # host change on such an entry migrates the id instead
+                    # of being rejected as a different device. This
+                    # deliberately skips _abort_if_unique_id_configured: if
+                    # the new host happens to belong to an already-
+                    # configured (serial-identified) entry, that collision
+                    # is an accepted, unhandled edge case here.
+                    return self.async_update_reload_and_abort(
+                        reconfigure_entry,
+                        data=user_input,
+                        unique_id=new_unique_id,
+                    )
                 self._abort_if_unique_id_mismatch()
                 return self.async_update_reload_and_abort(
                     reconfigure_entry, data=user_input
