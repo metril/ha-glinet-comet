@@ -10,6 +10,16 @@ write-only routes, to record whether they exist (405) or not (404).
 Credentials are read from ``.comet_pass`` in the repo root and are never
 printed, logged, or written to the dump.
 
+DESTRUCTIVE GET ROUTES — NEVER PROBE: ``/api/upgrade/reboot`` and
+``/api/upgrade/reset_default`` are registered as GET handlers in glkvm and
+actually execute (reboot / factory-reset) on GET — there is no method
+gating to rely on. A prior GET probe of ``/api/upgrade/reboot`` really did
+reboot the device, despite returning a plain 200. ``/api/upgrade/start``
+and ``/api/msd/partition_format`` are treated the same way out of caution.
+These four paths are listed in ``NEVER_TOUCH`` below and are refused by
+every GET helper in this file, regardless of ``--probe-writes`` or the
+``READS``/``PROBE_PATHS`` lists — do not remove or work around that guard.
+
 Usage:
 
     uv run python tools/dump_api.py --host <device-ip-or-hostname> [--probe-writes]
@@ -37,7 +47,14 @@ DEFAULT_PASS_FILE = os.path.join(HERE, "..", ".comet_pass")
 
 # GET routes to dump: (label, path).
 READS = [
-    ("info", "/api/info?fields=system,health,auth,meta"),
+    # "health" is not a valid field on this fork (confirmed 400 in a prior
+    # run); the WS `info` event stream showed the valid sections are
+    # system/auth/meta/extras.
+    ("info", "/api/info?fields=system,auth,meta,extras"),
+    # Upstream kvmd's legacy field, carrying hw.health.{temp,cpu,mem,net} +
+    # hw.platform on stock kvmd/PiKVM. Unconfirmed on this fork — if this
+    # 400s, that is itself the finding (no hw/health metrics available).
+    ("info_hw", "/api/info?fields=hw"),
     ("atx", "/api/atx"),
     ("hid", "/api/hid"),
     ("msd", "/api/msd"),
@@ -54,15 +71,49 @@ READS = [
 ]
 
 # Write-only routes probed with GET only (never POST) to see if they exist.
+# NOTE: "/api/upgrade/reboot" is deliberately NOT in this list — see
+# NEVER_TOUCH below. It is GET-registered in glkvm and a prior GET probe
+# really did reboot the device despite returning a plain 200; there is no
+# method gating to rely on for it.
 PROBE_PATHS = [
     "/api/atx/click",
     "/api/hid/events/send_shortcut",
     "/api/hid/set_params",
     "/api/msd/set_connected",
-    "/api/upgrade/reboot",
     "/api/hid/print",
     "/api/gpio/switch",
 ]
+
+# Routes that execute a destructive action on GET (no method gating) —
+# confirmed for /api/upgrade/reboot by a real, unintended reboot from a
+# prior GET probe; the other three are treated the same way out of caution
+# since glkvm registers them the same way. Every GET helper in this file
+# checks against this list and refuses to request any of them, regardless
+# of --probe-writes or what's in READS/PROBE_PATHS. Do not remove a path
+# from this list without confirming (via source, not by testing live) that
+# it is safe.
+NEVER_TOUCH = (
+    "/api/upgrade/reboot",
+    "/api/upgrade/reset_default",
+    "/api/upgrade/start",
+    "/api/msd/partition_format",
+)
+
+
+class ForbiddenPathError(Exception):
+    """Raised when something tries to GET a path in NEVER_TOUCH. Never
+    catch-and-continue this — remove the caller instead."""
+
+
+def _guard_path(path: str) -> None:
+    bare = path.split("?", 1)[0]
+    if bare in NEVER_TOUCH:
+        raise ForbiddenPathError(
+            f"refusing to GET {bare!r}: this route executes destructively "
+            "on GET (no method gating) and must never be requested by this "
+            "tool, with or without --probe-writes"
+        )
+
 
 # --- Redaction -------------------------------------------------------------
 
@@ -227,6 +278,7 @@ def _auth_kwargs(token: str) -> dict:
 
 
 async def api_get(session: aiohttp.ClientSession, host: str, path: str, token: str, ssl_param) -> dict:
+    _guard_path(path)
     url = f"https://{host}{path}"
     try:
         async with session.get(url, ssl=ssl_param, **_auth_kwargs(token)) as resp:
@@ -243,7 +295,9 @@ async def api_get(session: aiohttp.ClientSession, host: str, path: str, token: s
 
 
 async def get_snapshot(session: aiohttp.ClientSession, host: str, token: str, ssl_param) -> dict:
-    url = f"https://{host}/api/streamer/snapshot?allow_offline=1"
+    path = "/api/streamer/snapshot?allow_offline=1"
+    _guard_path(path)
+    url = f"https://{host}{path}"
     try:
         async with session.get(url, ssl=ssl_param, **_auth_kwargs(token)) as resp:
             status = resp.status
@@ -260,15 +314,20 @@ async def get_snapshot(session: aiohttp.ClientSession, host: str, token: str, ss
 
 
 async def run_probes(session: aiohttp.ClientSession, host: str, token: str, ssl_param) -> dict:
-    """GET (never POST) the write-only routes; record status only."""
+    """GET (never POST) the write-only routes; record status plus the first
+    200 chars of the response body."""
     results = {}
     for path in PROBE_PATHS:
+        _guard_path(path)  # PROBE_PATHS is a fixed literal list, but never trust that alone
         url = f"https://{host}{path}"
         try:
             async with session.get(url, ssl=ssl_param, **_auth_kwargs(token)) as resp:
-                results[path] = resp.status
+                status = resp.status
+                raw = await resp.read()
+            body_preview = raw.decode("utf-8", errors="replace")[:200]
+            results[path] = {"status": status, "body_preview": body_preview}
         except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
-            results[path] = f"error: {exc}"
+            results[path] = {"status": None, "error": str(exc)}
     return results
 
 
@@ -436,9 +495,11 @@ async def run(host: str, user: str, password: str, totp_secret: str, ssl_param,
     redacted = {
         "meta": redacted_meta,
         "reads": {label: redact(entry, token) for label, entry in dump["reads"].items()},
+        # Each probe result is {"status": int, "body_preview": str} (or an
+        # "error" dict on a request failure) — redact() only touches its
+        # nested string content (IPs/token), never the path key itself.
         "probe_writes": {
-            path: (value if isinstance(value, int) else redact(value, token))
-            for path, value in dump["probe_writes"].items()
+            path: redact(value, token) for path, value in dump["probe_writes"].items()
         },
         "snapshot": redact(dump["snapshot"], token),
         "ws_events": {
