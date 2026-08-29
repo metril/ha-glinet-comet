@@ -113,9 +113,17 @@ _KV_LINE = re.compile(r"^(user|password|passwd|totp_secret|secret)\s*:\s*(.*)$",
 _NORMALIZE_KEY = {"passwd": "password", "secret": "totp_secret"}
 
 
+def _unquote(value: str) -> str:
+    """Strip a single matching pair of surrounding quotes, if present."""
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+        return value[1:-1]
+    return value
+
+
 def parse_comet_pass(path: str) -> tuple[str, str, str]:
     """Parse ``.comet_pass``. Supports ``key: value`` lines (user/password/
-    totp_secret) or a single ``user:pass:secret`` line. Never prints contents.
+    totp_secret) or a single ``user:pass:secret`` line; values may optionally
+    be wrapped in matching quotes. Never prints contents.
     """
     if not os.path.exists(path):
         print(f"credentials file not found: {path}", file=sys.stderr)
@@ -131,7 +139,7 @@ def parse_comet_pass(path: str) -> tuple[str, str, str]:
         if m:
             kv_format = True
             key = _NORMALIZE_KEY.get(m.group(1).lower(), m.group(1).lower())
-            data[key] = m.group(2).strip()
+            data[key] = _unquote(m.group(2).strip())
 
     if kv_format:
         return data.get("user", ""), data.get("password", ""), data.get("totp_secret", "")
@@ -139,9 +147,9 @@ def parse_comet_pass(path: str) -> tuple[str, str, str]:
     if not lines:
         return "", "", ""
     parts = lines[0].split(":")
-    user = parts[0] if len(parts) > 0 else ""
-    password = parts[1] if len(parts) > 1 else ""
-    totp_secret = parts[2] if len(parts) > 2 else ""
+    user = _unquote(parts[0]) if len(parts) > 0 else ""
+    password = _unquote(parts[1]) if len(parts) > 1 else ""
+    totp_secret = _unquote(parts[2]) if len(parts) > 2 else ""
     return user, password, totp_secret
 
 
@@ -413,11 +421,39 @@ async def run(host: str, user: str, password: str, totp_secret: str, ssl_param,
         finally:
             await logout(session, host, token, ssl_param)
 
-    redacted = redact(dump, token)
-    # Set after redact(), not before: the key "token_location" itself would
-    # otherwise match the sensitive-key filter (it contains the segment
-    # "token") and its own answer would be destroyed.
-    redacted["meta"]["token_location"] = token_location
+    # Redact each substructure's *content* independently, rather than one
+    # blanket redact(dump, token) over the whole tree. A blanket pass would
+    # run _is_sensitive_key() over our own bookkeeping keys too — the route
+    # labels in READS and the WS event_type names — not just the API's own
+    # field names. That's how a route we named "system_hostname" (the label
+    # is ours, chosen for READS) previously vanished entirely: the label
+    # contains the segment "hostname", not just the value. Route/event-type
+    # names are fixed literals we control and are never sensitive by
+    # themselves; only recurse the sensitive-key filter into actual payload
+    # content.
+    redacted_meta = redact(dump["meta"], token)
+    redacted_meta["token_location"] = token_location  # set after redact(); see above
+    redacted = {
+        "meta": redacted_meta,
+        "reads": {label: redact(entry, token) for label, entry in dump["reads"].items()},
+        "probe_writes": {
+            path: (value if isinstance(value, int) else redact(value, token))
+            for path, value in dump["probe_writes"].items()
+        },
+        "snapshot": redact(dump["snapshot"], token),
+        "ws_events": {
+            event_type: (
+                {
+                    "count": entry.get("count", 0),
+                    "first": redact(entry.get("first"), token),
+                    "deltas": [redact(d, token) for d in entry.get("deltas", [])],
+                }
+                if isinstance(entry, dict)
+                else redact(entry, token)  # e.g. "_error": "<exception text>"
+            )
+            for event_type, entry in dump["ws_events"].items()
+        },
+    }
     return redacted
 
 
