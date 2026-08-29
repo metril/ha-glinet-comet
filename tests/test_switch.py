@@ -361,3 +361,20 @@ async def test_gpio_switches_fresh_but_equal_model_adds_nothing():
     gpio_switches = [e for e in add.added if isinstance(e, CometGpioSwitch)]
     assert len(gpio_switches) == 1  # still just the original one
     assert len(add.batches) == batches_before  # nothing new, so no add_entities call
+
+
+@pytest.mark.asyncio
+async def test_gpio_listener_removed_on_unload_stops_further_adds():
+    """The dynamic-add listener is registered via `entry.async_on_unload`;
+    invoking the stored remover (as HA does on unload) must stop it from
+    reacting to further coordinator updates."""
+    coord, add = await _setup_recording({})
+    assert len(coord.entry.unload_callbacks) == 1
+    remove = coord.entry.unload_callbacks[0]
+    remove()
+
+    coord.data = _load_fixture("state_gpio.json")  # a brand-new gpio_model
+    coord.async_update_listeners()
+
+    gpio_switches = [e for e in add.added if isinstance(e, CometGpioSwitch)]
+    assert gpio_switches == []  # listener was removed -- nothing added
