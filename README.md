@@ -20,7 +20,7 @@ socket doesn't carry.
 | binary_sensor | HDMI Signal | |
 | binary_sensor | Keyboard Online | |
 | binary_sensor | Mouse Online | |
-| binary_sensor | GPIO inputs | Only if GPIO channels are configured on the Comet (none on the tested unit) |
+| binary_sensor | GPIO inputs | Only if GPIO channels are configured on the Comet (none on the tested unit); channels configured later appear within one poll interval, no reload needed |
 | sensor | Resolution | |
 | sensor | MSD Image | Currently mounted virtual-media image |
 | sensor | KVMD Version | |
@@ -30,13 +30,13 @@ socket doesn't carry.
 | switch | Mouse Jiggler | |
 | switch | HID Connected | |
 | switch | Virtual Media | Connects/disconnects the mounted MSD image; unavailable until an image is selected |
-| switch | GPIO outputs | Only if GPIO channels are configured on the Comet (none on the tested unit) |
+| switch | GPIO outputs | Only if GPIO channels are configured on the Comet (none on the tested unit); channels configured later appear within one poll interval, no reload needed |
 | button | ATX Power | Requires the ATX board |
 | button | ATX Power (Long Press) | Requires the ATX board |
 | button | ATX Reset | Requires the ATX board |
 | button | Reset HID | |
 | button | Reboot | Reboots the Comet — see [Notes](#notes--gotchas) |
-| button | GPIO pulse outputs | Only if GPIO channels are configured on the Comet (none on the tested unit) |
+| button | GPIO pulse outputs | Only if GPIO channels are configured on the Comet (none on the tested unit); channels configured later appear within one poll interval, no reload needed |
 | select | MSD Image | Choose which uploaded image is mounted |
 | camera | Screen | JPEG snapshot of the captured video, not a live stream |
 | update | Firmware | Read-only — see [Notes](#notes--gotchas) |

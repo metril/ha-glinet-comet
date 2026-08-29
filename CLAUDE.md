@@ -21,17 +21,22 @@ which runs `glkvm` — GL.iNet's fork of PiKVM's `kvmd`.
 - Subsystem merges are deep-merges (`_deep_merge`), never wholesale
   replacement, except `msd.storage` (a merge could never notice a removed
   image) and `gpio`/`gpio_model` on a full `GET /api/gpio`.
-- GPIO entities (v0.2.0): one `binary_sensor` per input channel, plus a
-  `switch` per output channel whose model has `switch: true` or a `button`
-  per output channel with a `pulse` config (`max_delay` missing/`None` or
-  `> 0`; explicit `max_delay: 0` means "pulse disabled" per upstream kvmd)
-  and no switch capability. Names
+- GPIO entities (v0.2.0, dynamic since v0.2.1): one `binary_sensor` per
+  input channel, plus a `switch` per output channel whose model has
+  `switch: true` or a `button` per output channel with a `pulse` config
+  (`max_delay` missing/`None` or `> 0`; explicit `max_delay: 0` means
+  "pulse disabled" per upstream kvmd) and no switch capability. Names
   come from the device's GPIO view labels, falling back to a title-cased
   channel id; entities are unavailable unless the channel reports
   `online: true`. No optimistic update — the device pushes `gpio` WS
   frames. `api.py` gained `gpio_switch(channel, state)` /
   `gpio_pulse(channel, delay)`; `parsers.py` gained `atx_hdd_active`,
-  `gpio_channel`, `gpio_model_channels`, `gpio_display_name`.
+  `gpio_channel`, `gpio_model_channels`, `gpio_display_name`. `gpio` is
+  polled every slow cycle, same as `atx` (see Gotchas); each platform adds
+  new channels dynamically via `gpio.py`'s `async_setup_gpio_entities`,
+  guarded by a `gpio_model` object-identity check plus a per-channel
+  dedupe set. A channel that vanishes from a later `gpio_model` is never
+  removed — its entity is just left unavailable.
 
 ## Auth
 
