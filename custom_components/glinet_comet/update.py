@@ -19,7 +19,7 @@ from .const import DOMAIN
 from .coordinator import CometDataUpdateCoordinator
 from .entity import CometEntity
 
-_RELEASE_URL = "https://www.gl-inet.com/download/"
+_RELEASE_URL = "https://dl.gl-inet.com/"
 
 
 async def async_setup_entry(

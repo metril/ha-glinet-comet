@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import logging
-
 import voluptuous as vol
 
 from homeassistant.core import HomeAssistant, ServiceCall
@@ -12,8 +10,6 @@ from homeassistant.helpers import config_validation as cv, device_registry as dr
 
 from .api import CometApiClient, CometError
 from .const import DOMAIN
-
-_LOGGER = logging.getLogger(__name__)
 
 SERVICE_TYPE_TEXT = "type_text"
 SERVICE_SEND_SHORTCUT = "send_shortcut"
@@ -40,7 +36,6 @@ SEND_SHORTCUT_SCHEMA = vol.Schema(
     }
 )
 
-
 def _client_for_device(hass: HomeAssistant, device_id: str) -> CometApiClient:
     """Resolve a device_id to its GL.iNet Comet API client."""
     device = dr.async_get(hass).async_get(device_id)
@@ -53,7 +48,6 @@ def _client_for_device(hass: HomeAssistant, device_id: str) -> CometApiClient:
             return data["client"]
 
     raise HomeAssistantError(f"Device {device_id} is not a GL.iNet Comet")
-
 
 def async_setup_services(hass: HomeAssistant) -> None:
     """Register the GL.iNet Comet HID services once per Home Assistant instance."""
@@ -83,7 +77,6 @@ def async_setup_services(hass: HomeAssistant) -> None:
             _handle_send_shortcut,
             schema=SEND_SHORTCUT_SCHEMA,
         )
-
 
 def async_unload_services(hass: HomeAssistant) -> None:
     """Remove the GL.iNet Comet services once no config entries remain."""
