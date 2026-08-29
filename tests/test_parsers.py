@@ -698,7 +698,7 @@ def test_gpio_model_channels_inputs(gpio):
 
 def test_gpio_model_channels_outputs(gpio):
     channels = parsers.gpio_model_channels(gpio, "outputs")
-    assert set(channels) == {"out_switch", "out_pulse", "out_none"}
+    assert set(channels) == {"out_switch", "out_pulse", "out_pulse_disabled", "out_none"}
     assert channels["out_switch"]["switch"] is True
 
 
@@ -733,3 +733,49 @@ def test_gpio_display_name_empty_labels():
 
 def test_gpio_display_name_missing_labels_dict():
     assert parsers.gpio_display_name("out_none", None) == "Out None"
+
+
+def test_gpio_pulse_capable_missing_max_delay_is_capable():
+    assert parsers.gpio_pulse_capable({"delay": 0.5}) is True
+
+
+def test_gpio_pulse_capable_none_max_delay_is_capable():
+    assert parsers.gpio_pulse_capable({"delay": 0.5, "max_delay": None}) is True
+
+
+def test_gpio_pulse_capable_positive_max_delay():
+    assert parsers.gpio_pulse_capable({"delay": 0.5, "max_delay": 5.0}) is True
+
+
+def test_gpio_pulse_capable_zero_max_delay_disabled():
+    assert parsers.gpio_pulse_capable({"delay": 0.1, "max_delay": 0}) is False
+
+
+def test_gpio_pulse_capable_negative_max_delay_disabled():
+    assert parsers.gpio_pulse_capable({"delay": 0.1, "max_delay": -1}) is False
+
+
+def test_gpio_pulse_capable_non_numeric_max_delay_disabled():
+    assert parsers.gpio_pulse_capable({"delay": 0.1, "max_delay": "5"}) is False
+
+
+def test_gpio_pulse_capable_bool_max_delay_disabled():
+    assert parsers.gpio_pulse_capable({"delay": 0.1, "max_delay": True}) is False
+
+
+def test_gpio_pulse_capable_non_dict_config():
+    assert parsers.gpio_pulse_capable(None) is False
+    assert parsers.gpio_pulse_capable("garbage") is False
+
+
+def test_gpio_pulse_delay_present():
+    assert parsers.gpio_pulse_delay({"delay": 0.5, "max_delay": 5.0}) == 0.5
+
+
+def test_gpio_pulse_delay_missing_defaults_to_zero():
+    assert parsers.gpio_pulse_delay({"max_delay": 5.0}) == 0.0
+
+
+def test_gpio_pulse_delay_non_dict_config():
+    assert parsers.gpio_pulse_delay(None) == 0.0
+    assert parsers.gpio_pulse_delay("garbage") == 0.0

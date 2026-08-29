@@ -23,7 +23,9 @@ which runs `glkvm` — GL.iNet's fork of PiKVM's `kvmd`.
   image) and `gpio`/`gpio_model` on a full `GET /api/gpio`.
 - GPIO entities (v0.2.0): one `binary_sensor` per input channel, plus a
   `switch` per output channel whose model has `switch: true` or a `button`
-  per output channel with a `pulse` config and no switch capability. Names
+  per output channel with a `pulse` config (`max_delay` missing/`None` or
+  `> 0`; explicit `max_delay: 0` means "pulse disabled" per upstream kvmd)
+  and no switch capability. Names
   come from the device's GPIO view labels, falling back to a title-cased
   channel id; entities are unavailable unless the channel reports
   `online: true`. No optimistic update — the device pushes `gpio` WS

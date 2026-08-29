@@ -138,3 +138,25 @@ async def test_setup_entry_skips_non_dict_gpio_output_config():
     pulse_buttons = [e for e in added if isinstance(e, CometGpioPulseButton)]
     assert len(pulse_buttons) == 1
     assert pulse_buttons[0]._channel == "out_pulse"
+
+
+@pytest.mark.asyncio
+async def test_setup_entry_skips_pulse_channel_with_zero_max_delay():
+    """max_delay: 0 is kvmd's convention for "pulse disabled" on this channel."""
+    data = {
+        "gpio_model": {
+            "outputs": {
+                "out_pulse_disabled": {
+                    "switch": False,
+                    "pulse": {"delay": 0.1, "min_delay": 0, "max_delay": 0},
+                },
+            }
+        },
+        "gpio": {"outputs": {"out_pulse_disabled": {"online": True, "state": False}}},
+        "gpio_labels": {},
+    }
+
+    added = await _setup(data)
+
+    pulse_buttons = [e for e in added if isinstance(e, CometGpioPulseButton)]
+    assert pulse_buttons == []

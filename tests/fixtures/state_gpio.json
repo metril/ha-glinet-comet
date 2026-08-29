@@ -161,7 +161,17 @@
       "out_pulse": {
         "switch": false,
         "pulse": {
-          "delay": 0.5
+          "delay": 0.5,
+          "min_delay": 0.1,
+          "max_delay": 5.0
+        }
+      },
+      "out_pulse_disabled": {
+        "switch": false,
+        "pulse": {
+          "delay": 0.1,
+          "min_delay": 0,
+          "max_delay": 0
         }
       },
       "out_none": {

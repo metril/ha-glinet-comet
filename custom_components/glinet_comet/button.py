@@ -108,8 +108,8 @@ async def async_setup_entry(
         if not isinstance(config, dict):
             continue
         pulse = config.get("pulse")
-        if pulse and config.get("switch") is not True:
-            delay = pulse.get("delay", 0) if isinstance(pulse, dict) else 0
+        if config.get("switch") is not True and parsers.gpio_pulse_capable(pulse):
+            delay = parsers.gpio_pulse_delay(pulse)
             entities.append(CometGpioPulseButton(coordinator, entry, channel, delay))
 
     async_add_entities(entities)
