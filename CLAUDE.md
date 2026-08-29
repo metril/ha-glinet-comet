@@ -18,6 +18,16 @@ which runs `glkvm` — GL.iNet's fork of PiKVM's `kvmd`.
   `self.async_update_listeners()` (`_push_state`) — **not**
   `async_set_updated_data`, which reschedules `update_interval` on every
   call and would starve the slow HTTP tier if called per WS frame.
+- Soft-core failure tier: a per-subsystem `CometApiError` (any status,
+  including 400/404) on a CORE read (`atx`, `info_system`, `hid`, `msd`,
+  `streamer`) keeps that subsystem's last state, logs warn-once/then-debug
+  (`_log_read_failure`, tracked via `_read_warned`), and the cycle still
+  succeeds — core reads are never added to `unsupported` (that means "skip
+  forever"). Exceptions: if ALL core reads fail in the same cycle, or this
+  is the first-ever cycle (`_had_successful_cycle` still `False` —
+  `CometEntity.__init__` snapshots device serial/model/sw_version from that
+  first cycle), the cycle raises `UpdateFailed` instead. Auth/rate-limit/
+  connection errors and optional-read 400/404-vs-retry rules are unchanged.
 - Subsystem merges are deep-merges (`_deep_merge`), never wholesale
   replacement, except `msd.storage` (a merge could never notice a removed
   image) and `gpio`/`gpio_model` on a full `GET /api/gpio`.
