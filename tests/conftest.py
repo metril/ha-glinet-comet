@@ -381,6 +381,8 @@ def _stub_homeassistant() -> None:
         key: str
         name: str | None = None
         icon: str | None = None
+        translation_key: str | None = None
+        entity_registry_enabled_default: bool = True
         device_class: str | None = None
         entity_category: str | None = None
 
@@ -453,7 +455,26 @@ def _stub_homeassistant() -> None:
         REDACTED="**REDACTED**",
     )
 
+    @dataclass(frozen=True, kw_only=True)
+    class _SensorEntityDescription(_EntityDescription):
+        state_class: str | None = None
+        native_unit_of_measurement: str | None = None
+
+    class _SensorEntity:
+        pass
+
+    class _SensorStateClass:
+        MEASUREMENT = "measurement"
+
+    ha_comp_sensor = _mod(
+        "homeassistant.components.sensor",
+        SensorEntity=_SensorEntity,
+        SensorEntityDescription=_SensorEntityDescription,
+        SensorStateClass=_SensorStateClass,
+    )
+
     ha_components = _mod("homeassistant.components")
+    ha_components.sensor = ha_comp_sensor
     ha_components.select = ha_comp_select
     ha_components.switch = ha_comp_switch
     ha_components.binary_sensor = ha_comp_binary_sensor
@@ -488,6 +509,7 @@ def _stub_homeassistant() -> None:
         "homeassistant.components.switch": ha_comp_switch,
         "homeassistant.components.binary_sensor": ha_comp_binary_sensor,
         "homeassistant.components.button": ha_comp_button,
+        "homeassistant.components.sensor": ha_comp_sensor,
         "homeassistant.components.diagnostics": ha_comp_diagnostics,
     }
     for name, module in modules.items():

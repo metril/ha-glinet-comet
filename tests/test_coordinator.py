@@ -301,7 +301,8 @@ async def test_gpio_is_fetched_every_cycle():
     # get no WS-pushed writes back (MSD in particular pushes nothing), so
     # they can't rely on WS push alone and are re-polled every cycle too.
     assert client.calls["get_atx"] == 2
-    assert client.calls["get_info_system"] == 2
+    # info_system is slow-gated (SLOW_READ_INTERVAL): read once, not per cycle.
+    assert client.calls["get_info_system"] == 1
     assert client.calls["get_hid"] == 2
     assert client.calls["get_msd"] == 2
     assert client.calls["get_streamer"] == 2
@@ -1118,6 +1119,7 @@ async def test_ws_reconnect_after_mid_listen_error_triggers_refresh(monkeypatch)
         await coord._ws_loop()
 
     assert client.calls["connect_ws"] == 2
+    await asyncio.gather(*coord.hass.tasks)  # refresh runs as a background task
     # Exactly once: not on the first-ever connect, but on the reconnect that
     # follows the mid-listen drop.
     assert refresh_calls == [True]
@@ -1280,3 +1282,109 @@ def test_push_partial_merges_and_publishes_without_set_updated_data():
     coord.push_partial("msd", {"drive": {"connected": True}})
 
     assert coord.data["msd"]["drive"] == {"image": "a", "connected": True}
+
+
+@pytest.mark.asyncio
+async def test_slow_gated_reads_skipped_within_interval():
+    client = FakeClient()
+    coord = make_coordinator(client)
+    await coord._async_update_data()
+    await coord._async_update_data()
+    for name in ("get_info_system", "get_upgrade_version", "get_upgrade_compare"):
+        assert client.calls[name] == 1, name
+    # hostname/network are never gated: an IP change must show within a cycle.
+    assert client.calls["get_hostname"] == 2
+    assert client.calls["get_network_config"] == 2
+    # Past the interval the gated reads happen again.
+    for key in list(coord._slow_last):
+        coord._slow_last[key] -= 7 * 3600
+    await coord._async_update_data()
+    assert client.calls["get_info_system"] == 2
+    assert client.calls["get_upgrade_version"] == 2
+
+
+@pytest.mark.asyncio
+async def test_unexpected_exception_logged_once_at_warning(caplog):
+    client = FakeClient()
+    coord = make_coordinator(client)
+    await coord._async_update_data()
+
+    async def boom():
+        raise RuntimeError("kaboom")
+
+    client.get_hid = boom
+    caplog.clear()
+    with caplog.at_level(logging.DEBUG, logger="custom_components.glinet_comet.coordinator"):
+        await coord._async_update_data()
+        await coord._async_update_data()
+    recs = [r for r in caplog.records if "raised unexpectedly" in r.getMessage()]
+    assert [r.levelno for r in recs] == [logging.WARNING, logging.DEBUG]
+
+
+@pytest.mark.asyncio
+async def test_ws_backoff_grows_caps_and_warns_once(monkeypatch, caplog):
+    client = FakeClient()
+    coord = make_coordinator(client)
+    coord._state["ws_connected"] = True
+    pushes: list[bool] = []
+    coord._push_state = lambda: pushes.append(True)
+
+    async def failing_connect(stream=True):
+        raise CometConnectionError("down")
+
+    client.connect_ws = failing_connect
+    sleeps: list[float] = []
+
+    async def fake_sleep(seconds):
+        sleeps.append(seconds)
+        if len(sleeps) >= 9:
+            raise asyncio.CancelledError()
+
+    monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+    with caplog.at_level(logging.DEBUG, logger="custom_components.glinet_comet.coordinator"):
+        with pytest.raises(asyncio.CancelledError):
+            await coord._ws_loop()
+    assert sleeps == [5, 10, 20, 40, 80, 160, 300, 300, 300]
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert len(pushes) == 1
+
+
+@pytest.mark.asyncio
+async def test_ws_backoff_only_resets_after_stable_connection(monkeypatch):
+    """A socket that accepts the handshake and drops at once must still back off."""
+    import custom_components.glinet_comet.coordinator as coord_mod
+
+    clock = [1000.0]
+    monkeypatch.setattr(coord_mod, "monotonic", lambda: clock[0])
+
+    class _DropsImmediately(FakeWSRaisingAfterOne):
+        def __init__(self, uptime: float = 0.0) -> None:
+            super().__init__(None, CometConnectionError("dropped"))
+            self._uptime = uptime
+
+        async def __anext__(self):
+            clock[0] += self._uptime  # time the connection stayed up
+            raise self._exc
+
+    client = FakeClient()
+    # The 4th connection survives 120s before dropping; the others drop at once.
+    client.ws_sequence = [_DropsImmediately(120.0 if i == 3 else 0.0) for i in range(6)]
+    coord = make_coordinator(client)
+    coord._push_state = lambda: None
+
+    async def fake_refresh():
+        pass
+
+    coord.async_request_refresh = fake_refresh
+    sleeps: list[float] = []
+
+    async def fake_sleep(seconds):
+        sleeps.append(seconds)
+        if len(sleeps) >= 5:
+            raise asyncio.CancelledError()
+
+    monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+    with pytest.raises(asyncio.CancelledError):
+        await coord._ws_loop()
+    assert sleeps == [5, 10, 20, 5, 10]

@@ -50,8 +50,7 @@ class CometSwitchDescription(SwitchEntityDescription):
 SWITCHES: tuple[CometSwitchDescription, ...] = (
     CometSwitchDescription(
         key="hid_jiggler",
-        name="Mouse Jiggler",
-        icon="mdi:mouse-move-vertical",
+        translation_key="hid_jiggler",
         value_fn=parsers.jiggler_enabled,
         turn_on_fn=lambda client: client.set_hid_jiggler(True),
         turn_off_fn=lambda client: client.set_hid_jiggler(False),
@@ -59,14 +58,15 @@ SWITCHES: tuple[CometSwitchDescription, ...] = (
     ),
     CometSwitchDescription(
         key="hid_connected",
-        name="HID Connected",
-        icon="mdi:usb",
+        translation_key="hid_connected",
         value_fn=parsers.hid_connected,
         turn_on_fn=lambda client: client.set_hid_connected(True),
         turn_off_fn=lambda client: client.set_hid_connected(False),
         optimistic_fn=_set_hid_connected,
     ),
 )
+
+PARALLEL_UPDATES = 1
 
 
 async def async_setup_entry(
@@ -150,8 +150,7 @@ class CometMsdConnectedSwitch(CometEntity, SwitchEntity):
     select entity must be used first).
     """
 
-    _attr_name = "Virtual Media"
-    _attr_icon = "mdi:usb-flash-drive"
+    _attr_translation_key = "msd_connected"
 
     def __init__(
         self,

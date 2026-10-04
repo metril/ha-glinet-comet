@@ -1,0 +1,54 @@
+{
+  "entity": {
+    "sensor": {
+      "resolution": {
+        "default": "mdi:monitor"
+      },
+      "msd_image": {
+        "default": "mdi:disc"
+      },
+      "kvmd_version": {
+        "default": "mdi:information-outline"
+      },
+      "firmware_version": {
+        "default": "mdi:chip"
+      },
+      "ip_address": {
+        "default": "mdi:ip-network"
+      },
+      "hostname": {
+        "default": "mdi:dns"
+      }
+    },
+    "button": {
+      "atx_power": {
+        "default": "mdi:power"
+      },
+      "atx_power_long": {
+        "default": "mdi:power-plug-off"
+      },
+      "atx_reset": {
+        "default": "mdi:restart"
+      },
+      "hid_reset": {
+        "default": "mdi:keyboard-off"
+      }
+    },
+    "switch": {
+      "hid_jiggler": {
+        "default": "mdi:mouse-move-vertical"
+      },
+      "hid_connected": {
+        "default": "mdi:usb"
+      },
+      "msd_connected": {
+        "default": "mdi:usb-flash-drive"
+      }
+    },
+    "select": {
+      "msd_image": {
+        "default": "mdi:disc"
+      }
+    }
+  }
+}

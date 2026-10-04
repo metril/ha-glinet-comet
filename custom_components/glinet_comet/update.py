@@ -20,6 +20,8 @@ from .entity import CometEntity
 
 _RELEASE_URL = "https://dl.gl-inet.com/"
 
+PARALLEL_UPDATES = 0
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -34,7 +36,7 @@ async def async_setup_entry(
 class CometFirmwareUpdate(CometEntity, UpdateEntity):
     """Reports the Comet's installed/available firmware version."""
 
-    _attr_name = "Firmware"
+    _attr_translation_key = "firmware"
     _attr_device_class = UpdateDeviceClass.FIRMWARE
     _ws_backed = False
     _attr_title = "GL.iNet Comet firmware"

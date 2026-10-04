@@ -52,6 +52,21 @@ which runs `glkvm` — GL.iNet's fork of PiKVM's `kvmd`.
   dedupe set. A channel that vanishes from a later `gpio_model` is never
   removed — its entity is just left unavailable.
 
+- Entity names/icons live in `strings.json` + `translations/en.json` (kept
+  identical) under `entity.<platform>.<translation_key>` and `icons.json`;
+  static entities use `translation_key`, never hard-coded `name=`/`icon=`
+  (GPIO entities keep their live label). Test enforces key coverage.
+- `PARALLEL_UPDATES`: 0 for read-only platforms (binary_sensor, sensor,
+  camera, update), 1 for button/switch/select.
+- WS reconnect backs off exponentially from `ws_reconnect_delay` (cap 300s;
+  the counter resets only after a connection survived `_WS_STABLE_SECONDS`,
+  not on the handshake); WARNING only on the first consecutive failure.
+- `info_system`/`upgrade_version`/`upgrade_compare` are gated by
+  `SLOW_READ_INTERVAL` (`_slow_last`; WS reconnect resets all but compare).
+  `hostname`/`network` stay on every slow cycle so IP changes show promptly.
+- Added: `ws_connected` binary_sensor; `captured_fps` sensor; disabled-by-
+  default diagnostic `mac_address`/`gateway`/`dhcp` sensors.
+
 ## Auth
 
 - `POST /api/auth/login` once, form-encoded: `user`, `passwd`, `expire=0`.

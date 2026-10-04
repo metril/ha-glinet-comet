@@ -48,40 +48,38 @@ class CometButtonDescription(ButtonEntityDescription):
 BUTTONS: tuple[CometButtonDescription, ...] = (
     CometButtonDescription(
         key="atx_power",
-        name="ATX Power",
-        icon="mdi:power",
+        translation_key="atx_power",
         press_fn=lambda client: client.atx_click("power"),
         requires_atx=True,
     ),
     CometButtonDescription(
         key="atx_power_long",
-        name="ATX Power (Long Press)",
-        icon="mdi:power-plug-off",
+        translation_key="atx_power_long",
         press_fn=lambda client: client.atx_click("power_long"),
         requires_atx=True,
     ),
     CometButtonDescription(
         key="atx_reset",
-        name="ATX Reset",
-        icon="mdi:restart",
+        translation_key="atx_reset",
         press_fn=lambda client: client.atx_click("reset"),
         requires_atx=True,
     ),
     CometButtonDescription(
         key="hid_reset",
-        name="Reset HID",
-        icon="mdi:keyboard-off",
+        translation_key="hid_reset",
         entity_category=EntityCategory.CONFIG,
         press_fn=lambda client: client.reset_hid(),
     ),
     CometButtonDescription(
         key="reboot",
-        name="Reboot",
+        translation_key="reboot",
         device_class=ButtonDeviceClass.RESTART,
         entity_category=EntityCategory.CONFIG,
         press_fn=_press_reboot,
     ),
 )
+
+PARALLEL_UPDATES = 1
 
 
 async def async_setup_entry(

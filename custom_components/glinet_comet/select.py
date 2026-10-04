@@ -19,6 +19,8 @@ from .entity import CometEntity
 # async_select_option maps it to image="" before calling set_msd_params.
 MSD_IMAGE_NONE = "(none)"
 
+PARALLEL_UPDATES = 1
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -33,8 +35,7 @@ async def async_setup_entry(
 class CometMsdImageSelect(CometEntity, SelectEntity):
     """Select entity for choosing which image is mounted via MSD."""
 
-    _attr_name = "MSD Image"
-    _attr_icon = "mdi:disc"
+    _attr_translation_key = "msd_image"
 
     def __init__(
         self,

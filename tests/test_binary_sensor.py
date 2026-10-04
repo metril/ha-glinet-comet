@@ -275,3 +275,18 @@ def test_atx_binary_sensors_are_poll_only():
     for key in ("atx_power", "atx_hdd_activity"):
         assert _description(key).ws_backed is False
     assert _description("hdmi_signal").ws_backed is True
+
+
+def test_ws_connected_sensor_value_and_availability():
+    desc = _description("ws_connected")
+    assert desc.always_available is True
+    from custom_components.glinet_comet.binary_sensor import CometBinarySensor
+
+    coord = make_coordinator({"ws_connected": False})
+    ent = CometBinarySensor(coord, coord.entry, desc)
+    assert ent.is_on is False
+    assert ent.available is True  # even with WS down
+    coord.data = {"ws_connected": True}
+    assert ent.is_on is True
+    coord.data = None
+    assert ent.available is False

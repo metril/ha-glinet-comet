@@ -304,6 +304,29 @@ def ip_address(data: dict[str, Any]) -> str | None:
     return _as_str(value)
 
 
+def gateway(data: dict[str, Any]) -> str | None:
+    """Return the network gateway address."""
+    return _as_str(
+        first_path(data, "glinet.network.config.gateway", "glinet.network.gateway")
+    )
+
+
+def dhcp_mode(data: dict[str, Any]) -> str | None:
+    """Return ``"DHCP"``/``"Static"`` from ``is_dhcp`` (None when unknown)."""
+    value = is_dhcp(data)
+    if value is None:
+        return None
+    return "DHCP" if value else "Static"
+
+
+def captured_fps(data: dict[str, Any]) -> int | None:
+    """Return the captured video FPS (None when the streamer is down)."""
+    streamer = _dig(data, "streamer.streamer")
+    if not isinstance(streamer, dict):
+        return None
+    return _as_int(_dig(streamer, "source.captured_fps"))
+
+
 def network_state(data: dict[str, Any]) -> str | None:
     """Return the network link state (e.g. ``"online"``)."""
     return _as_str(_dig(data, "glinet.network.config.state"))

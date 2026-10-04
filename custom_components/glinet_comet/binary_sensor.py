@@ -33,46 +33,59 @@ class CometBinarySensorDescription(BinarySensorEntityDescription):
     requires_atx: bool = False
     # ATX state only ever arrives via the slow HTTP poll (no WS event observed).
     ws_backed: bool = True
+    # Available whenever the coordinator has any data (e.g. the WS flag itself).
+    always_available: bool = False
 
 
 BINARY_SENSORS: tuple[CometBinarySensorDescription, ...] = (
     CometBinarySensorDescription(
         key="atx_power",
         ws_backed=False,
-        name="ATX Power",
+        translation_key="atx_power",
         device_class=BinarySensorDeviceClass.POWER,
         value_fn=parsers.atx_power_on,
         requires_atx=True,
     ),
     CometBinarySensorDescription(
         key="hdmi_signal",
-        name="HDMI Signal",
+        translation_key="hdmi_signal",
         device_class=BinarySensorDeviceClass.CONNECTIVITY,
         value_fn=parsers.hdmi_signal,
     ),
     CometBinarySensorDescription(
         key="keyboard_online",
-        name="Keyboard Online",
+        translation_key="keyboard_online",
         device_class=BinarySensorDeviceClass.CONNECTIVITY,
         entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=parsers.keyboard_online,
     ),
     CometBinarySensorDescription(
         key="mouse_online",
-        name="Mouse Online",
+        translation_key="mouse_online",
         device_class=BinarySensorDeviceClass.CONNECTIVITY,
         entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=parsers.mouse_online,
     ),
     CometBinarySensorDescription(
+        key="ws_connected",
+        translation_key="ws_connected",
+        ws_backed=False,
+        always_available=True,
+        device_class=BinarySensorDeviceClass.CONNECTIVITY,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda data: bool(data.get("ws_connected")),
+    ),
+    CometBinarySensorDescription(
         key="atx_hdd_activity",
         ws_backed=False,
-        name="ATX HDD Activity",
+        translation_key="atx_hdd_activity",
         device_class=BinarySensorDeviceClass.RUNNING,
         value_fn=parsers.atx_hdd_active,
         requires_atx=True,
     ),
 )
+
+PARALLEL_UPDATES = 0
 
 
 async def async_setup_entry(
@@ -120,6 +133,13 @@ class _CometBinarySensorMixin:
         self.entity_description = description
         self._attr_unique_id = f"{entry.entry_id}_{description.key}"
         self._ws_backed = description.ws_backed
+
+    @property
+    def available(self) -> bool:
+        """Return availability (``always_available`` ignores update failures)."""
+        if self.entity_description.always_available:
+            return self.coordinator.data is not None
+        return super().available
 
     @property
     def is_on(self) -> bool | None:

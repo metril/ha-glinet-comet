@@ -51,6 +51,7 @@ from .api import (
     CometApiError,
     CometAuthError,
     CometConnectionError,
+    CometError,
     CometRateLimitError,
 )
 from .const import (
@@ -65,6 +66,20 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+# Rarely-changing reads, re-read at most once per SLOW_READ_INTERVAL.
+# hostname/network are deliberately NOT gated: they are the GL.iNet-specific
+# reads the slow tier exists for, and an IP/DHCP change must show within
+# one update_interval.
+_SLOW_GATED = (
+    "info_system",
+    "upgrade_version",
+    "upgrade_compare",
+)
+_WS_BACKOFF_CAP = 300
+# A WS connection must survive this long before the reconnect backoff resets,
+# so a socket that accepts the handshake and drops at once still backs off.
+_WS_STABLE_SECONDS = 60
 
 
 def _deep_merge(dest: dict[str, Any], src: dict[str, Any]) -> None:
@@ -105,7 +120,10 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._read_warned: set[str] = set()
         self._had_successful_cycle = False
         self._ws_has_connected_once = False
-        self._last_upgrade_compare: float | None = None
+        # Last successful read time per slow-gated key (see _SLOW_GATED).
+        self._slow_last: dict[str, float] = {}
+        self._ws_failures = 0
+        self._ws_connected_at: float | None = None
         self._state: dict[str, Any] = {
             "atx": {},
             "hid": {},
@@ -159,9 +177,14 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Poll the slow HTTP tier for every WS-unreliable/WS-only subsystem."""
         unsupported: list[str] = self._state["unsupported"]
 
+        now = monotonic()
+
+        def due(key: str) -> bool:
+            last = self._slow_last.get(key)
+            return last is None or now - last >= SLOW_READ_INTERVAL
+
         core: dict[str, Any] = {
             "atx": self.client.get_atx(),
-            "info_system": self.client.get_info("system"),
             # hid/msd/streamer are read every cycle, not just bootstrapped
             # once: no WS event carries hid/msd/streamer writes back (MSD in
             # particular pushes nothing), so this poll is the only way state
@@ -170,30 +193,25 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "msd": self.client.get_msd(),
             "streamer": self.client.get_streamer(),
         }
+        if due("info_system"):
+            core["info_system"] = self.client.get_info("system")
         optional: dict[str, Any] = {}
 
         def add_optional(key: str, factory: Callable[[], Any]) -> None:
             # `factory` is only called when the key isn't already known-unsupported,
             # so a skipped read never creates (and leaks) an unawaited coroutine.
-            if key not in unsupported:
+            if key not in unsupported and (key not in _SLOW_GATED or due(key)):
                 optional[key] = factory()
 
         add_optional("hw", lambda: self.client.get_info("hw"))
         add_optional("hostname", lambda: self.client.get_hostname())
         add_optional("network", lambda: self.client.get_network_config())
         add_optional("upgrade_version", lambda: self.client.get_upgrade_version())
+        add_optional("upgrade_compare", lambda: self.client.get_upgrade_compare())
         # gpio is polled every cycle, same as atx/hid/msd/streamer: it's the
         # only source of new or changed channels (see the module docstring),
         # so a one-shot bootstrap would never notice a channel added later.
         add_optional("gpio", lambda: self.client.get_gpio())
-
-        now = monotonic()
-        due_compare = (
-            self._last_upgrade_compare is None
-            or now - self._last_upgrade_compare >= SLOW_READ_INTERVAL
-        )
-        if due_compare:
-            add_optional("upgrade_compare", lambda: self.client.get_upgrade_compare())
 
         keys = [*core.keys(), *optional.keys()]
         results = await asyncio.gather(
@@ -242,6 +260,19 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             for key, err in core_failures.items():
                 self._log_read_failure(key, err)
 
+        for key, result in by_key.items():
+            if isinstance(result, BaseException) and not isinstance(
+                result, CometError
+            ):
+                # Unexpected (non-Comet) failure: never drop it silently.
+                first = key not in self._read_warned
+                self._read_warned.add(key)
+                (_LOGGER.warning if first else _LOGGER.debug)(
+                    "%s read raised unexpectedly; keeping last known state: %r",
+                    key,
+                    result,
+                )
+
         for key in optional:
             result = by_key[key]
             if isinstance(result, CometApiError):
@@ -263,12 +294,9 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 continue
             self._apply_read(key, result)
 
-        if (
-            due_compare
-            and "upgrade_compare" in by_key
-            and not isinstance(by_key["upgrade_compare"], BaseException)
-        ):
-            self._last_upgrade_compare = now
+        for key in _SLOW_GATED:
+            if key in by_key and not isinstance(by_key[key], BaseException):
+                self._slow_last[key] = now
 
         # Only relax the first-cycle gate if a core read actually landed in
         # state -- a cycle where every core read raised a non-CometError
@@ -340,10 +368,9 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 continue
             except Exception as err:  # noqa: BLE001 - any other drop triggers reconnect
                 self._set_ws_connected(False)
-                delay = self.entry.options.get(
-                    CONF_WS_RECONNECT_DELAY, DEFAULT_WS_RECONNECT_DELAY
-                )
-                _LOGGER.warning(
+                first = self._ws_failures == 0
+                delay = self._next_ws_delay()
+                (_LOGGER.warning if first else _LOGGER.debug)(
                     "Comet WebSocket disconnected (%s); reconnecting in %ds",
                     type(err).__name__,
                     delay,
@@ -352,10 +379,31 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 continue
             else:
                 self._set_ws_connected(False)
-                delay = self.entry.options.get(
-                    CONF_WS_RECONNECT_DELAY, DEFAULT_WS_RECONNECT_DELAY
+                first = self._ws_failures == 0
+                delay = self._next_ws_delay()
+                (_LOGGER.warning if first else _LOGGER.debug)(
+                    "Comet WebSocket closed; reconnecting in %ds", delay
                 )
                 await asyncio.sleep(delay)
+
+    def _next_ws_delay(self) -> float:
+        """Return the next reconnect delay: base * 2**failures, capped at 300s.
+
+        The failure count only resets once a connection has stayed up for
+        ``_WS_STABLE_SECONDS``, never on the handshake alone.
+        """
+        base = self.entry.options.get(
+            CONF_WS_RECONNECT_DELAY, DEFAULT_WS_RECONNECT_DELAY
+        )
+        if (
+            self._ws_connected_at is not None
+            and monotonic() - self._ws_connected_at >= _WS_STABLE_SECONDS
+        ):
+            self._ws_failures = 0  # the last connection was stable
+        self._ws_connected_at = None
+        delay = min(base * 2**self._ws_failures, max(_WS_BACKOFF_CAP, base))
+        self._ws_failures += 1
+        return delay
 
     async def _ws_connect_and_listen(self) -> None:
         """Connect once and process events until the socket drops.
@@ -370,9 +418,23 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._ws = await self.client.connect_ws(stream=self._keep_video_active)
         reconnect = self._ws_has_connected_once
         self._ws_has_connected_once = True
+        self._ws_connected_at = monotonic()
         self._set_ws_connected(True)
         if reconnect:
-            await self.async_request_refresh()
+            # Static reads may have changed while we were away (reboot/upgrade).
+            for key in ("info_system", "upgrade_version"):
+                self._slow_last.pop(key, None)
+            coro = self.async_request_refresh()
+            name = f"{DOMAIN}_refresh_{self.entry.entry_id}"
+            create = getattr(
+                getattr(self, "config_entry", None) or self.entry,
+                "async_create_background_task",
+                None,
+            )
+            if callable(create):
+                create(self.hass, coro, name)
+            else:
+                self.hass.async_create_background_task(coro, name)
         try:
             async for msg in self._ws:
                 if msg.type == aiohttp.WSMsgType.TEXT:
@@ -399,6 +461,8 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     def _set_ws_connected(self, connected: bool) -> None:
         """Update the ``ws_connected`` flag and push it to listeners."""
+        if self._state.get("ws_connected") == connected:
+            return
         self._state["ws_connected"] = connected
         self._push_state()
 

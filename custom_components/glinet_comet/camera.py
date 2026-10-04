@@ -20,6 +20,8 @@ from .entity import CometEntity
 
 _LOGGER = logging.getLogger(__name__)
 
+PARALLEL_UPDATES = 0
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -34,7 +36,7 @@ async def async_setup_entry(
 class CometScreenCamera(CometEntity, Camera):
     """Camera entity exposing a JPEG snapshot of the captured screen."""
 
-    _attr_name = "Screen"
+    _attr_translation_key = "screen"
 
     def __init__(
         self,
