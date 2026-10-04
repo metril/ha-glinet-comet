@@ -22,6 +22,7 @@ class CometSensorDescription(SensorEntityDescription):
     """Describes a GL.iNet Comet sensor."""
 
     value_fn: Callable[[dict[str, Any]], Any] = lambda data: None
+    ws_backed: bool = True
 
 
 SENSORS: tuple[CometSensorDescription, ...] = (
@@ -46,6 +47,7 @@ SENSORS: tuple[CometSensorDescription, ...] = (
     ),
     CometSensorDescription(
         key="firmware_version",
+        ws_backed=False,
         name="Firmware Version",
         entity_category=EntityCategory.DIAGNOSTIC,
         icon="mdi:chip",
@@ -53,6 +55,7 @@ SENSORS: tuple[CometSensorDescription, ...] = (
     ),
     CometSensorDescription(
         key="ip_address",
+        ws_backed=False,
         name="IP Address",
         entity_category=EntityCategory.DIAGNOSTIC,
         icon="mdi:ip-network",
@@ -60,6 +63,7 @@ SENSORS: tuple[CometSensorDescription, ...] = (
     ),
     CometSensorDescription(
         key="hostname",
+        ws_backed=False,
         name="Hostname",
         entity_category=EntityCategory.DIAGNOSTIC,
         icon="mdi:dns",
@@ -92,6 +96,7 @@ class CometSensor(CometEntity, SensorEntity):
         """Initialize the sensor."""
         super().__init__(coordinator, entry)
         self.entity_description = description
+        self._ws_backed = description.ws_backed
         self._attr_unique_id = f"{entry.entry_id}_{description.key}"
 
     @property

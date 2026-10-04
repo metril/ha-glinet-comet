@@ -269,3 +269,9 @@ async def test_gpio_listener_removed_on_unload_stops_further_adds():
 
     gpio_inputs = [e for e in add.added if isinstance(e, CometGpioInputBinarySensor)]
     assert gpio_inputs == []  # listener was removed -- nothing added
+
+
+def test_atx_binary_sensors_are_poll_only():
+    for key in ("atx_power", "atx_hdd_activity"):
+        assert _description(key).ws_backed is False
+    assert _description("hdmi_signal").ws_backed is True

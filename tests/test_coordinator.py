@@ -1186,7 +1186,7 @@ def test_comet_entity_device_info_from_parsers():
     }
 
     entity = CometEntity(coord, coord.entry)
-    info = entity._attr_device_info
+    info = entity.device_info
 
     assert info["model"] == "RM1PE"
     assert info["sw_version"] == "V1.9.1 release1"
@@ -1221,3 +1221,62 @@ def test_gpio_entities_are_comet_gpio_entity_subclasses():
     assert issubclass(CometGpioInputBinarySensor, CometGpioEntity)
     assert issubclass(CometGpioSwitch, CometGpioEntity)
     assert issubclass(CometGpioPulseButton, CometGpioEntity)
+
+
+# --- review fixes: ws frames, availability, device_info, push_partial --------
+
+
+class _BadJsonMsg:
+    type = aiohttp.WSMsgType.TEXT
+
+    def json(self):
+        raise ValueError("bad json")
+
+
+@pytest.mark.asyncio
+async def test_ws_bad_frames_are_skipped_without_reconnect():
+    client = FakeClient()
+    client.ws_to_return = FakeWS(
+        [
+            _BadJsonMsg(),
+            FakeWSMsg(aiohttp.WSMsgType.TEXT, [1, 2]),
+            FakeWSMsg(aiohttp.WSMsgType.TEXT, {"event_type": "atx", "event": {"busy": True}}),
+            FakeWSMsg(aiohttp.WSMsgType.CLOSED),
+        ]
+    )
+    coord = make_coordinator(client)
+
+    await coord._ws_connect_and_listen()
+
+    assert coord.data["atx"]["busy"] is True
+
+
+def test_ws_connected_keeps_ws_backed_entity_available_only():
+    coord = make_coordinator(FakeClient())
+    coord.data = {"ws_connected": True}
+    coord.last_update_success = False
+    ws_entity = CometEntity(coord, coord.entry)
+    poll_entity = CometEntity(coord, coord.entry)
+    poll_entity._ws_backed = False
+
+    assert ws_entity.available is True
+    assert poll_entity.available is False
+
+
+def test_device_info_is_live():
+    coord = make_coordinator(FakeClient())
+    coord.data = {"glinet": {"upgrade_version": UPGRADE_VERSION_RESULT}}
+    entity = CometEntity(coord, coord.entry)
+    assert entity.device_info["sw_version"] == "V1.9.1 release1"
+    coord.data = {"glinet": {"upgrade_version": {**UPGRADE_VERSION_RESULT, "version": "V2.0"}}}
+    assert entity.device_info["sw_version"] == "V2.0"
+
+
+def test_push_partial_merges_and_publishes_without_set_updated_data():
+    coord = make_coordinator(FakeClient())
+    coord.async_set_updated_data = Mock(side_effect=AssertionError("no"))
+    coord._state["msd"] = {"drive": {"image": "a", "connected": False}}
+
+    coord.push_partial("msd", {"drive": {"connected": True}})
+
+    assert coord.data["msd"]["drive"] == {"image": "a", "connected": True}

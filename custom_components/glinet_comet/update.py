@@ -36,6 +36,7 @@ class CometFirmwareUpdate(CometEntity, UpdateEntity):
 
     _attr_name = "Firmware"
     _attr_device_class = UpdateDeviceClass.FIRMWARE
+    _ws_backed = False
     _attr_title = "GL.iNet Comet firmware"
     _attr_release_url = _RELEASE_URL
 

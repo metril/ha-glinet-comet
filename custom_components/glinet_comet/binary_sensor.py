@@ -31,11 +31,14 @@ class CometBinarySensorDescription(BinarySensorEntityDescription):
     # Only created when the enable_atx option is on; served by CometAtxBinarySensor
     # so it also goes unavailable whenever the device reports no ATX board attached.
     requires_atx: bool = False
+    # ATX state only ever arrives via the slow HTTP poll (no WS event observed).
+    ws_backed: bool = True
 
 
 BINARY_SENSORS: tuple[CometBinarySensorDescription, ...] = (
     CometBinarySensorDescription(
         key="atx_power",
+        ws_backed=False,
         name="ATX Power",
         device_class=BinarySensorDeviceClass.POWER,
         value_fn=parsers.atx_power_on,
@@ -63,6 +66,7 @@ BINARY_SENSORS: tuple[CometBinarySensorDescription, ...] = (
     ),
     CometBinarySensorDescription(
         key="atx_hdd_activity",
+        ws_backed=False,
         name="ATX HDD Activity",
         device_class=BinarySensorDeviceClass.RUNNING,
         value_fn=parsers.atx_hdd_active,
@@ -115,6 +119,7 @@ class _CometBinarySensorMixin:
         super().__init__(coordinator, entry)
         self.entity_description = description
         self._attr_unique_id = f"{entry.entry_id}_{description.key}"
+        self._ws_backed = description.ws_backed
 
     @property
     def is_on(self) -> bool | None:

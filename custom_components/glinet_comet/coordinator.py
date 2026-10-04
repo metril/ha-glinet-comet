@@ -336,7 +336,7 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     "Comet WebSocket login rate-limited; retrying in %ds",
                     err.remaining_time,
                 )
-                await asyncio.sleep(err.remaining_time)
+                await asyncio.sleep(max(1, err.remaining_time))
                 continue
             except Exception as err:  # noqa: BLE001 - any other drop triggers reconnect
                 self._set_ws_connected(False)
@@ -376,7 +376,14 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         try:
             async for msg in self._ws:
                 if msg.type == aiohttp.WSMsgType.TEXT:
-                    self._process_ws_message(msg.json())
+                    try:
+                        payload = msg.json()
+                        if not isinstance(payload, dict):
+                            continue
+                        self._process_ws_message(payload)
+                    except (ValueError, TypeError, KeyError, AttributeError) as err:
+                        _LOGGER.debug("Comet WebSocket: skipping bad frame: %r", err)
+                        continue
                 elif msg.type == aiohttp.WSMsgType.ERROR:
                     break
                 elif msg.type in (
@@ -413,6 +420,14 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # turn/ap/repeater/modem and any other frame we don't model yet.
             return
         handler(event)
+        self._push_state()
+
+    def push_partial(self, subsystem: str, patch: dict[str, Any]) -> None:
+        """Deep-merge ``patch`` into ``_state[subsystem]`` and publish (optimistic updates)."""
+        current = self._state.get(subsystem)
+        if not isinstance(current, dict):
+            current = self._state[subsystem] = {}
+        _deep_merge(current, patch)
         self._push_state()
 
     def _push_state(self) -> None:

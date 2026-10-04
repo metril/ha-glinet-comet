@@ -71,6 +71,12 @@ which runs `glkvm` — GL.iNet's fork of PiKVM's `kvmd`.
   after 10 failures, every extra attempt counts toward that —
   `async_login()` and `tools/dump_api.py`'s `login()` are single-shot by
   design; don't add a retry loop around either.
+- Login-generation guard: `_reauth` captures `_login_gen` before taking
+  `_login_lock`; if it changed while waiting, reuse the new token or
+  re-raise `_last_login_error` instead of POSTing another login; a
+  caller whose 401 arrives *after* a login already failed for the same
+  stale token re-raises too, within `LOGIN_FAILURE_SHARE_WINDOW` (30s).
+  Net: one burst of 401s = one login attempt against the lockout counter.
 - `.comet_pass` (dev tool only, gitignored) values may be wrapped in one
   matching pair of quotes (`user: "admin"`); `_unquote()` strips exactly
   one such pair, no more.
@@ -113,6 +119,14 @@ which runs `glkvm` — GL.iNet's fork of PiKVM's `kvmd`.
   Deliberately skips `_abort_if_unique_id_configured` on that path —
   pointing a host-fallback entry at an already-configured serial is an
   accepted, unhandled edge case.
+
+- Availability: `CometEntity.available` is also True while
+  `data["ws_connected"]` is set (`_ws_backed = True`), so a failed slow poll
+  doesn't blank WS-fed entities; poll-only entities (update, glinet.*
+  sensors) set `_ws_backed = False`. `device_info` is a live property.
+- Optimistic updates use `coordinator.push_partial(subsystem, patch)`
+  (deep-merge + `_push_state`), never `async_set_updated_data`.
+- WS frames that fail to parse / aren't dicts are skipped (debug log), not a reconnect.
 
 ## Conventions
 

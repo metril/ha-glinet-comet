@@ -9,6 +9,8 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import parsers
 from .data import CometConfigEntry
+from typing import Any
+
 from .api import CometError
 from .coordinator import CometDataUpdateCoordinator
 from .entity import CometEntity
@@ -86,8 +88,7 @@ class CometMsdImageSelect(CometEntity, SelectEntity):
         except CometError as err:
             raise HomeAssistantError(str(err)) from err
         if self.coordinator.data is not None:
-            drive = self.coordinator.data.setdefault("msd", {}).setdefault("drive", {})
+            drive: dict[str, Any] = {"image": image or None}
             if was_connected:
                 drive["connected"] = False
-            drive["image"] = image or None
-            self.coordinator.async_set_updated_data(self.coordinator.data)
+            self.coordinator.push_partial("msd", {"drive": drive})

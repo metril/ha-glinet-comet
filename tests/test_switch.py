@@ -11,6 +11,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from types import SimpleNamespace
 
 import pytest
+from unittest.mock import Mock
 
 from custom_components.glinet_comet.api import CometApiError
 from custom_components.glinet_comet.const import DOMAIN
@@ -18,7 +19,6 @@ from custom_components.glinet_comet.coordinator import CometDataUpdateCoordinato
 from custom_components.glinet_comet.switch import (
     CometGpioSwitch,
     CometMsdConnectedSwitch,
-    _set_msd_drive_connected,
     async_setup_entry,
 )
 from homeassistant.exceptions import HomeAssistantError
@@ -77,18 +77,9 @@ def make_switch(
 ) -> tuple[CometDataUpdateCoordinator, CometMsdConnectedSwitch]:
     coord = CometDataUpdateCoordinator(FakeHass(), FakeEntry(), client)
     coord.data = data
+    coord._state.update(data)
     entity = CometMsdConnectedSwitch(coord, coord.entry)
     return coord, entity
-
-
-def test_set_msd_drive_connected_helper_uses_setdefault():
-    data: dict = {}
-    _set_msd_drive_connected(data, True)
-    assert data == {"msd": {"drive": {"connected": True}}}
-
-    data2 = {"msd": {"enabled": True}}
-    _set_msd_drive_connected(data2, False)
-    assert data2 == {"msd": {"enabled": True, "drive": {"connected": False}}}
 
 
 @pytest.mark.asyncio
@@ -98,7 +89,8 @@ async def test_turn_on_connects_and_applies_optimistic_update():
         client, {"msd": {"drive": {"connected": False, "image": "ubuntu.iso"}}}
     )
     pushed: list[dict] = []
-    coord.async_set_updated_data = lambda data: pushed.append(dict(data))
+    coord.async_set_updated_data = Mock(side_effect=AssertionError("no async_set_updated_data"))
+    coord.async_update_listeners = lambda: pushed.append(dict(coord.data))
 
     await entity.async_turn_on()
 
@@ -127,7 +119,8 @@ async def test_turn_off_disconnects_and_applies_optimistic_update():
         client, {"msd": {"drive": {"connected": True, "image": "ubuntu.iso"}}}
     )
     pushed: list[dict] = []
-    coord.async_set_updated_data = lambda data: pushed.append(dict(data))
+    coord.async_set_updated_data = Mock(side_effect=AssertionError("no async_set_updated_data"))
+    coord.async_update_listeners = lambda: pushed.append(dict(coord.data))
 
     await entity.async_turn_off()
 
@@ -144,7 +137,8 @@ async def test_turn_on_error_raises_and_skips_optimistic_update():
         client, {"msd": {"drive": {"connected": False, "image": "ubuntu.iso"}}}
     )
     pushed: list[dict] = []
-    coord.async_set_updated_data = lambda data: pushed.append(dict(data))
+    coord.async_set_updated_data = Mock(side_effect=AssertionError("no async_set_updated_data"))
+    coord.async_update_listeners = lambda: pushed.append(dict(coord.data))
 
     with pytest.raises(HomeAssistantError):
         await entity.async_turn_on()
@@ -175,6 +169,7 @@ def make_gpio_switch(
 ) -> tuple[CometDataUpdateCoordinator, CometGpioSwitch]:
     coord = CometDataUpdateCoordinator(FakeHass(), FakeEntry(), client)
     coord.data = data
+    coord._state.update(data)
     entity = CometGpioSwitch(coord, coord.entry, channel)
     return coord, entity
 
@@ -222,6 +217,7 @@ async def test_gpio_switch_error_raises_home_assistant_error():
 async def _setup(data: dict) -> list:
     coord = CometDataUpdateCoordinator(FakeHass(), FakeEntry(), FakeClient())
     coord.data = data
+    coord._state.update(data)
     hass = FakeHass()
     coord.entry.runtime_data = SimpleNamespace(coordinator=coord, client=None)
     added: list = []
@@ -283,6 +279,7 @@ class RecordingAddEntities:
 async def _setup_recording(data: dict) -> tuple[CometDataUpdateCoordinator, RecordingAddEntities]:
     coord = CometDataUpdateCoordinator(FakeHass(), FakeEntry(), FakeClient())
     coord.data = data
+    coord._state.update(data)
     hass = FakeHass()
     coord.entry.runtime_data = SimpleNamespace(coordinator=coord, client=None)
     add = RecordingAddEntities()

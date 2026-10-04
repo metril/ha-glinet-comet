@@ -17,6 +17,7 @@ class CometEntity(CoordinatorEntity[CometDataUpdateCoordinator]):
     """Base entity for GL.iNet Comet devices."""
 
     _attr_has_entity_name = True
+    _ws_backed: bool = True
 
     def __init__(
         self,
@@ -25,20 +26,36 @@ class CometEntity(CoordinatorEntity[CometDataUpdateCoordinator]):
     ) -> None:
         """Initialize the entity and its device info."""
         super().__init__(coordinator)
-        data = coordinator.data or {}
-        connections = set()
+        self._device_identifier = entry.entry_id
+        self._device_name = entry.title
+        self._config_url = f"https://{entry.data[CONF_HOST]}"
+        self._serial = parsers.serial(coordinator.data or {})
+
+    @property
+    def available(self) -> bool:
+        """Stay available while the WebSocket is up, even if a poll failed."""
+        return bool(
+            super().available
+            or (
+                self._ws_backed
+                and (self.coordinator.data or {}).get("ws_connected")
+            )
+        )
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Build device info live; identifiers never change."""
+        data = self.coordinator.data or {}
         mac = parsers.mac_address(data)
-        if mac:
-            connections = {(CONNECTION_NETWORK_MAC, mac)}
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, entry.entry_id)},
-            name=entry.title,
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._device_identifier)},
+            name=self._device_name,
             manufacturer=MANUFACTURER,
             model=parsers.device_model(data) or DEFAULT_MODEL,
             sw_version=parsers.firmware_version(data),
-            serial_number=parsers.serial(data),
-            configuration_url=f"https://{entry.data[CONF_HOST]}",
-            connections=connections,
+            serial_number=self._serial or parsers.serial(data),
+            configuration_url=self._config_url,
+            connections={(CONNECTION_NETWORK_MAC, mac)} if mac else set(),
         )
 
 
