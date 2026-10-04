@@ -162,9 +162,12 @@ which runs `glkvm` — GL.iNet's fork of PiKVM's `kvmd`.
 
 ## Release process
 
-Bump `manifest.json`'s `version` in the commit that ships the release, tag
-`vX.Y.Z` to match, and cut a GitHub release — `release.yml` re-derives the
-version from the tag and zips `custom_components/glinet_comet` as the asset.
+Bump `manifest.json`'s `version` in the commit that ships the release, then
+either run the Release workflow by hand with the tag as input
+(`gh workflow run release.yml -f tag=vX.Y.Z`; it creates the tag and the
+GitHub release on `main`) or cut the release in the UI. Either way
+`release.yml` refuses a tag that doesn't match the manifest version and
+attaches `custom_components/glinet_comet` zipped as `glinet_comet.zip`.
 
 ## Verified shapes (live, 2026-08-29, fw V1.9.1 release1)
 

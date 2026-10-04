@@ -3,21 +3,45 @@ name: Release
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to create (vX.Y.Z); must match manifest.json version"
+        required: true
+        type: string
+      prerelease:
+        description: "Mark the release as a pre-release"
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   release:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.event.release.tag_name }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - name: Update manifest version
+      - name: Validate tag against manifest version
         run: |
-          VERSION="${{ github.event.release.tag_name }}"
-          VERSION="${VERSION#v}"
-          jq --arg v "$VERSION" '.version = $v' custom_components/glinet_comet/manifest.json > tmp.json
-          mv tmp.json custom_components/glinet_comet/manifest.json
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+            echo "::error::Tag '$TAG' must look like vX.Y.Z"; exit 1
+          fi
+          MANIFEST=$(jq -r .version custom_components/glinet_comet/manifest.json)
+          if [[ "${TAG#v}" != "$MANIFEST" ]]; then
+            echo "::error::Tag '$TAG' does not match manifest.json version '$MANIFEST'"; exit 1
+          fi
+
+      - name: Create tag and release
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          ARGS=(--target "$GITHUB_SHA" --title "$TAG" --generate-notes)
+          if [[ "${{ inputs.prerelease }}" == "true" ]]; then ARGS+=(--prerelease); fi
+          gh release create "$TAG" "${ARGS[@]}"
 
       - name: Create release ZIP
         run: |
@@ -25,11 +49,4 @@ jobs:
           zip -r ../../glinet_comet.zip .
 
       - name: Upload release asset
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ github.event.release.upload_url }}
-          asset_path: ./glinet_comet.zip
-          asset_name: glinet_comet.zip
-          asset_content_type: application/zip
+        run: gh release upload "$TAG" glinet_comet.zip --clobber
