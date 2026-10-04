@@ -11,15 +11,15 @@ from homeassistant.components.button import (
     ButtonEntity,
     ButtonEntityDescription,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import parsers
+from .data import CometConfigEntry
 from .api import CometApiClient, CometError
-from .const import CONF_ENABLE_ATX, DEFAULT_ENABLE_ATX, DOMAIN
+from .const import CONF_ENABLE_ATX, DEFAULT_ENABLE_ATX
 from .coordinator import CometDataUpdateCoordinator
 from .entity import CometAtxEntity, CometEntity, CometGpioEntity
 from .gpio import async_setup_gpio_entities
@@ -48,51 +48,47 @@ class CometButtonDescription(ButtonEntityDescription):
 BUTTONS: tuple[CometButtonDescription, ...] = (
     CometButtonDescription(
         key="atx_power",
-        name="ATX Power",
-        icon="mdi:power",
+        translation_key="atx_power",
         press_fn=lambda client: client.atx_click("power"),
         requires_atx=True,
     ),
     CometButtonDescription(
         key="atx_power_long",
-        name="ATX Power (Long Press)",
-        icon="mdi:power-plug-off",
+        translation_key="atx_power_long",
         press_fn=lambda client: client.atx_click("power_long"),
         requires_atx=True,
     ),
     CometButtonDescription(
         key="atx_reset",
-        name="ATX Reset",
-        icon="mdi:restart",
+        translation_key="atx_reset",
         press_fn=lambda client: client.atx_click("reset"),
         requires_atx=True,
     ),
     CometButtonDescription(
         key="hid_reset",
-        name="Reset HID",
-        icon="mdi:keyboard-off",
+        translation_key="hid_reset",
         entity_category=EntityCategory.CONFIG,
         press_fn=lambda client: client.reset_hid(),
     ),
     CometButtonDescription(
         key="reboot",
-        name="Reboot",
+        translation_key="reboot",
         device_class=ButtonDeviceClass.RESTART,
         entity_category=EntityCategory.CONFIG,
         press_fn=_press_reboot,
     ),
 )
 
+PARALLEL_UPDATES = 1
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: CometConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up GL.iNet Comet buttons."""
-    coordinator: CometDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id][
-        "coordinator"
-    ]
+    coordinator: CometDataUpdateCoordinator = entry.runtime_data.coordinator
     enable_atx = entry.options.get(CONF_ENABLE_ATX, DEFAULT_ENABLE_ATX)
 
     entities: list[ButtonEntity] = []
@@ -127,7 +123,7 @@ class _CometButtonMixin:
     def __init__(
         self,
         coordinator: CometDataUpdateCoordinator,
-        entry: ConfigEntry,
+        entry: CometConfigEntry,
         description: CometButtonDescription,
     ) -> None:
         """Initialize the button."""

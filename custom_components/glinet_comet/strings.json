@@ -108,5 +108,116 @@
         }
       }
     }
+  },
+  "entity": {
+    "binary_sensor": {
+      "atx_power": {
+        "name": "ATX Power"
+      },
+      "hdmi_signal": {
+        "name": "HDMI Signal"
+      },
+      "keyboard_online": {
+        "name": "Keyboard Online"
+      },
+      "mouse_online": {
+        "name": "Mouse Online"
+      },
+      "atx_hdd_activity": {
+        "name": "ATX HDD Activity"
+      },
+      "ws_connected": {
+        "name": "WebSocket connected"
+      }
+    },
+    "sensor": {
+      "resolution": {
+        "name": "Resolution"
+      },
+      "msd_image": {
+        "name": "MSD Image"
+      },
+      "kvmd_version": {
+        "name": "KVMD Version"
+      },
+      "firmware_version": {
+        "name": "Firmware Version"
+      },
+      "ip_address": {
+        "name": "IP Address"
+      },
+      "hostname": {
+        "name": "Hostname"
+      },
+      "mac_address": {
+        "name": "MAC address"
+      },
+      "gateway": {
+        "name": "Gateway"
+      },
+      "dhcp": {
+        "name": "IP assignment"
+      },
+      "captured_fps": {
+        "name": "Captured FPS"
+      }
+    },
+    "button": {
+      "atx_power": {
+        "name": "ATX Power"
+      },
+      "atx_power_long": {
+        "name": "ATX Power (Long Press)"
+      },
+      "atx_reset": {
+        "name": "ATX Reset"
+      },
+      "hid_reset": {
+        "name": "Reset HID"
+      },
+      "reboot": {
+        "name": "Reboot"
+      }
+    },
+    "switch": {
+      "hid_jiggler": {
+        "name": "Mouse Jiggler"
+      },
+      "hid_connected": {
+        "name": "HID Connected"
+      },
+      "msd_connected": {
+        "name": "Virtual Media"
+      }
+    },
+    "camera": {
+      "screen": {
+        "name": "Screen"
+      }
+    },
+    "update": {
+      "firmware": {
+        "name": "Firmware"
+      }
+    },
+    "select": {
+      "msd_image": {
+        "name": "MSD Image"
+      }
+    }
+  },
+  "exceptions": {
+    "device_not_found": {
+      "message": "Device {device_id} not found"
+    },
+    "not_comet_device": {
+      "message": "Device {device_id} is not a GL.iNet Comet"
+    },
+    "command_failed": {
+      "message": "Command failed: {error}"
+    },
+    "entry_not_loaded": {
+      "message": "The GL.iNet Comet for device {device_id} is not loaded"
+    }
   }
 }

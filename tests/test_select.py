@@ -8,6 +8,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import pytest
+from unittest.mock import Mock
 
 from custom_components.glinet_comet.api import CometApiError
 from custom_components.glinet_comet.coordinator import CometDataUpdateCoordinator
@@ -59,6 +60,7 @@ def make_select(
 ) -> tuple[CometDataUpdateCoordinator, CometMsdImageSelect]:
     coord = CometDataUpdateCoordinator(FakeHass(), FakeEntry(), client)
     coord.data = data
+    coord._state.update(data)
     entity = CometMsdImageSelect(coord, coord.entry)
     return coord, entity
 
@@ -70,7 +72,8 @@ async def test_select_image_sets_optimistic_drive_image_and_pushes():
         client, {"msd": {"drive": {"connected": False, "image": None}}}
     )
     pushed: list[dict] = []
-    coord.async_set_updated_data = lambda data: pushed.append(dict(data))
+    coord.async_set_updated_data = Mock(side_effect=AssertionError("no async_set_updated_data"))
+    coord.async_update_listeners = lambda: pushed.append(dict(coord.data))
 
     await entity.async_select_option("ubuntu.iso")
 
@@ -87,7 +90,8 @@ async def test_select_image_disconnects_first_when_connected_and_marks_disconnec
     coord, entity = make_select(
         client, {"msd": {"drive": {"connected": True, "image": "old.iso"}}}
     )
-    coord.async_set_updated_data = lambda data: None
+    coord.async_set_updated_data = Mock(side_effect=AssertionError("no async_set_updated_data"))
+    coord.async_update_listeners = lambda: None
 
     await entity.async_select_option("new.iso")
 
@@ -103,7 +107,8 @@ async def test_select_none_sentinel_maps_to_empty_image_and_none_optimistic_stat
     coord, entity = make_select(
         client, {"msd": {"drive": {"connected": False, "image": "old.iso"}}}
     )
-    coord.async_set_updated_data = lambda data: None
+    coord.async_set_updated_data = Mock(side_effect=AssertionError("no async_set_updated_data"))
+    coord.async_update_listeners = lambda: None
 
     await entity.async_select_option(MSD_IMAGE_NONE)
 
@@ -117,7 +122,8 @@ async def test_select_none_sentinel_maps_to_empty_image_and_none_optimistic_stat
 async def test_select_image_uses_setdefault_when_msd_drive_absent():
     client = FakeClient()
     coord, entity = make_select(client, {})
-    coord.async_set_updated_data = lambda data: None
+    coord.async_set_updated_data = Mock(side_effect=AssertionError("no async_set_updated_data"))
+    coord.async_update_listeners = lambda: None
 
     await entity.async_select_option("ubuntu.iso")
 
@@ -132,7 +138,8 @@ async def test_select_image_error_raises_home_assistant_error_and_skips_optimist
         client, {"msd": {"drive": {"connected": False, "image": None}}}
     )
     pushed: list[dict] = []
-    coord.async_set_updated_data = lambda data: pushed.append(dict(data))
+    coord.async_set_updated_data = Mock(side_effect=AssertionError("no async_set_updated_data"))
+    coord.async_update_listeners = lambda: pushed.append(dict(coord.data))
 
     with pytest.raises(HomeAssistantError):
         await entity.async_select_option("ubuntu.iso")

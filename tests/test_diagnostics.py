@@ -7,9 +7,10 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from types import SimpleNamespace
+
 import pytest
 
-from custom_components.glinet_comet.const import DOMAIN
 from custom_components.glinet_comet.diagnostics import (
     TO_REDACT,
     async_get_config_entry_diagnostics,
@@ -34,7 +35,8 @@ class FakeEntry:
 
 class FakeHass:
     def __init__(self, entry: FakeEntry, coordinator: FakeCoordinator) -> None:
-        self.data = {DOMAIN: {"test_entry": {"coordinator": coordinator}}}
+        self.data = {}
+        entry.runtime_data = SimpleNamespace(coordinator=coordinator, client=None)
 
 
 def test_host_is_in_to_redact():

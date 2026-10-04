@@ -10,40 +10,42 @@ from __future__ import annotations
 from typing import Any
 
 from homeassistant.components.update import UpdateDeviceClass, UpdateEntity
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import parsers
-from .const import DOMAIN
+from .data import CometConfigEntry
 from .coordinator import CometDataUpdateCoordinator
 from .entity import CometEntity
 
 _RELEASE_URL = "https://dl.gl-inet.com/"
 
+PARALLEL_UPDATES = 0
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: CometConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the GL.iNet Comet firmware update entity."""
-    data = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities([CometFirmwareUpdate(data["coordinator"], entry)])
+    coordinator = entry.runtime_data.coordinator
+    async_add_entities([CometFirmwareUpdate(coordinator, entry)])
 
 
 class CometFirmwareUpdate(CometEntity, UpdateEntity):
     """Reports the Comet's installed/available firmware version."""
 
-    _attr_name = "Firmware"
+    _attr_translation_key = "firmware"
     _attr_device_class = UpdateDeviceClass.FIRMWARE
+    _ws_backed = False
     _attr_title = "GL.iNet Comet firmware"
     _attr_release_url = _RELEASE_URL
 
     def __init__(
         self,
         coordinator: CometDataUpdateCoordinator,
-        entry: ConfigEntry,
+        entry: CometConfigEntry,
     ) -> None:
         """Initialize the firmware update entity."""
         super().__init__(coordinator, entry)

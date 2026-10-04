@@ -7,14 +7,13 @@ from dataclasses import dataclass
 from typing import Any
 
 from homeassistant.components.switch import SwitchEntity, SwitchEntityDescription
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import parsers
+from .data import CometConfigEntry
 from .api import CometApiClient, CometError
-from .const import DOMAIN
 from .coordinator import CometDataUpdateCoordinator
 from .entity import CometEntity, CometGpioEntity
 from .gpio import async_setup_gpio_entities
@@ -35,11 +34,6 @@ def _set_hid_connected(data: dict[str, Any], value: bool) -> None:
     data.setdefault("hid", {})["connected"] = value
 
 
-def _set_msd_drive_connected(data: dict[str, Any], value: bool) -> None:
-    """Optimistically set ``msd.drive.connected`` in coordinator state."""
-    data.setdefault("msd", {}).setdefault("drive", {})["connected"] = value
-
-
 @dataclass(frozen=True, kw_only=True)
 class CometSwitchDescription(SwitchEntityDescription):
     """Describes a GL.iNet Comet switch."""
@@ -48,7 +42,7 @@ class CometSwitchDescription(SwitchEntityDescription):
     turn_on_fn: Callable[[CometApiClient], Coroutine[Any, Any, None]]
     turn_off_fn: Callable[[CometApiClient], Coroutine[Any, Any, None]]
     # Applied to coordinator.data right after a successful write, then pushed via
-    # async_set_updated_data -- needed for state the device doesn't push back over
+    # coordinator.push_partial (applied to an empty dict to build the patch) -- needed for state the device doesn't push back over
     # the WebSocket event stream.
     optimistic_fn: Callable[[dict[str, Any], bool], None] | None = None
 
@@ -56,8 +50,7 @@ class CometSwitchDescription(SwitchEntityDescription):
 SWITCHES: tuple[CometSwitchDescription, ...] = (
     CometSwitchDescription(
         key="hid_jiggler",
-        name="Mouse Jiggler",
-        icon="mdi:mouse-move-vertical",
+        translation_key="hid_jiggler",
         value_fn=parsers.jiggler_enabled,
         turn_on_fn=lambda client: client.set_hid_jiggler(True),
         turn_off_fn=lambda client: client.set_hid_jiggler(False),
@@ -65,8 +58,7 @@ SWITCHES: tuple[CometSwitchDescription, ...] = (
     ),
     CometSwitchDescription(
         key="hid_connected",
-        name="HID Connected",
-        icon="mdi:usb",
+        translation_key="hid_connected",
         value_fn=parsers.hid_connected,
         turn_on_fn=lambda client: client.set_hid_connected(True),
         turn_off_fn=lambda client: client.set_hid_connected(False),
@@ -74,16 +66,16 @@ SWITCHES: tuple[CometSwitchDescription, ...] = (
     ),
 )
 
+PARALLEL_UPDATES = 1
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: CometConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up GL.iNet Comet switches."""
-    coordinator: CometDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id][
-        "coordinator"
-    ]
+    coordinator: CometDataUpdateCoordinator = entry.runtime_data.coordinator
     entities: list[SwitchEntity] = [
         CometSwitch(coordinator, entry, desc) for desc in SWITCHES
     ]
@@ -109,7 +101,7 @@ class CometSwitch(CometEntity, SwitchEntity):
     def __init__(
         self,
         coordinator: CometDataUpdateCoordinator,
-        entry: ConfigEntry,
+        entry: CometConfigEntry,
         description: CometSwitchDescription,
     ) -> None:
         """Initialize the switch."""
@@ -145,8 +137,10 @@ class CometSwitch(CometEntity, SwitchEntity):
             raise HomeAssistantError(str(err)) from err
         optimistic_fn = self.entity_description.optimistic_fn
         if optimistic_fn is not None and self.coordinator.data is not None:
-            optimistic_fn(self.coordinator.data, value)
-            self.coordinator.async_set_updated_data(self.coordinator.data)
+            patch: dict[str, Any] = {}
+            optimistic_fn(patch, value)
+            for subsystem, sub_patch in patch.items():
+                self.coordinator.push_partial(subsystem, sub_patch)
 
 
 class CometMsdConnectedSwitch(CometEntity, SwitchEntity):
@@ -156,13 +150,12 @@ class CometMsdConnectedSwitch(CometEntity, SwitchEntity):
     select entity must be used first).
     """
 
-    _attr_name = "Virtual Media"
-    _attr_icon = "mdi:usb-flash-drive"
+    _attr_translation_key = "msd_connected"
 
     def __init__(
         self,
         coordinator: CometDataUpdateCoordinator,
-        entry: ConfigEntry,
+        entry: CometConfigEntry,
     ) -> None:
         """Initialize the MSD connected switch."""
         super().__init__(coordinator, entry)
@@ -192,8 +185,7 @@ class CometMsdConnectedSwitch(CometEntity, SwitchEntity):
         except CometError as err:
             raise HomeAssistantError(str(err)) from err
         if self.coordinator.data is not None:
-            _set_msd_drive_connected(self.coordinator.data, True)
-            self.coordinator.async_set_updated_data(self.coordinator.data)
+            self.coordinator.push_partial("msd", {"drive": {"connected": True}})
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Disconnect the virtual drive."""
@@ -202,8 +194,7 @@ class CometMsdConnectedSwitch(CometEntity, SwitchEntity):
         except CometError as err:
             raise HomeAssistantError(str(err)) from err
         if self.coordinator.data is not None:
-            _set_msd_drive_connected(self.coordinator.data, False)
-            self.coordinator.async_set_updated_data(self.coordinator.data)
+            self.coordinator.push_partial("msd", {"drive": {"connected": False}})
 
 
 class CometGpioSwitch(CometGpioEntity, SwitchEntity):

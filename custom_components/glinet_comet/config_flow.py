@@ -12,7 +12,7 @@ from homeassistant.config_entries import (
     ConfigEntry,
     ConfigFlow,
     ConfigFlowResult,
-    OptionsFlow,
+    OptionsFlowWithReload,
 )
 from homeassistant.core import callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -277,7 +277,7 @@ class CometConfigFlow(ConfigFlow, domain=DOMAIN):
         return CometOptionsFlow()
 
 
-class CometOptionsFlow(OptionsFlow):
+class CometOptionsFlow(OptionsFlowWithReload):
     """Handle GL.iNet Comet options."""
 
     async def async_step_init(

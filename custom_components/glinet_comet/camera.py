@@ -10,37 +10,38 @@ from __future__ import annotations
 import logging
 
 from homeassistant.components.camera import Camera
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .api import CometError
-from .const import DOMAIN
 from .coordinator import CometDataUpdateCoordinator
+from .data import CometConfigEntry
 from .entity import CometEntity
 
 _LOGGER = logging.getLogger(__name__)
 
+PARALLEL_UPDATES = 0
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: CometConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the GL.iNet Comet screen camera entity."""
-    data = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities([CometScreenCamera(data["coordinator"], entry)])
+    coordinator = entry.runtime_data.coordinator
+    async_add_entities([CometScreenCamera(coordinator, entry)])
 
 
 class CometScreenCamera(CometEntity, Camera):
     """Camera entity exposing a JPEG snapshot of the captured screen."""
 
-    _attr_name = "Screen"
+    _attr_translation_key = "screen"
 
     def __init__(
         self,
         coordinator: CometDataUpdateCoordinator,
-        entry: ConfigEntry,
+        entry: CometConfigEntry,
     ) -> None:
         """Initialize the screen camera."""
         Camera.__init__(self)

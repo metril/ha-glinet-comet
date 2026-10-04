@@ -9,8 +9,18 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import pytest
 
-from custom_components.glinet_comet import async_unload_entry
+import custom_components.glinet_comet as integration
+from custom_components.glinet_comet import (
+    CONFIG_SCHEMA,
+    CometRuntimeData,
+    async_setup,
+    async_unload_entry,
+)
 from custom_components.glinet_comet.const import DOMAIN
+from custom_components.glinet_comet.services import (
+    SERVICE_SEND_SHORTCUT,
+    SERVICE_TYPE_TEXT,
+)
 
 
 class FakeConfigEntries:
@@ -46,6 +56,7 @@ class FakeHass:
 
 class FakeEntry:
     entry_id = "test_entry"
+    runtime_data = None
 
 
 class FakeCoordinator:
@@ -77,14 +88,13 @@ async def test_unload_entry_skips_teardown_when_platforms_fail_to_unload():
     entry = FakeEntry()
     coordinator = FakeCoordinator()
     client = FakeClient()
-    hass.data[DOMAIN] = {entry.entry_id: {"coordinator": coordinator, "client": client}}
+    entry.runtime_data = CometRuntimeData(coordinator, client)
 
     result = await async_unload_entry(hass, entry)
 
     assert result is False
     assert coordinator.stopped is False
     assert client.logged_out is False
-    assert entry.entry_id in hass.data[DOMAIN]  # never popped
 
 
 @pytest.mark.asyncio
@@ -93,11 +103,34 @@ async def test_unload_entry_runs_teardown_when_platforms_unload_cleanly():
     entry = FakeEntry()
     coordinator = FakeCoordinator()
     client = FakeClient()
-    hass.data[DOMAIN] = {entry.entry_id: {"coordinator": coordinator, "client": client}}
+    entry.runtime_data = CometRuntimeData(coordinator, client)
 
     result = await async_unload_entry(hass, entry)
 
     assert result is True
     assert coordinator.stopped is True
     assert client.logged_out is True
-    assert entry.entry_id not in hass.data[DOMAIN]
+    assert hass.data == {}
+
+
+@pytest.mark.asyncio
+async def test_async_setup_registers_services_and_unload_keeps_them():
+    hass = FakeHass(unload_ok=True)
+    assert await async_setup(hass, {}) is True
+    for svc in (SERVICE_TYPE_TEXT, SERVICE_SEND_SHORTCUT):
+        assert hass.services.has_service(DOMAIN, svc)
+
+    entry = FakeEntry()
+    entry.runtime_data = CometRuntimeData(FakeCoordinator(), FakeClient())
+    assert await async_unload_entry(hass, entry) is True
+    for svc in (SERVICE_TYPE_TEXT, SERVICE_SEND_SHORTCUT):
+        assert hass.services.has_service(DOMAIN, svc)
+
+
+def test_no_update_listener_or_hass_data_usage():
+    assert not hasattr(integration, "_async_update_listener")
+    assert CONFIG_SCHEMA is not None
+    import inspect
+
+    assert "add_update_listener" not in inspect.getsource(integration)
+    assert "hass.data" not in inspect.getsource(integration)

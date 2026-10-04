@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 from homeassistant.components.select import SelectEntity
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import parsers
+from .data import CometConfigEntry
+from typing import Any
+
 from .api import CometError
-from .const import DOMAIN
 from .coordinator import CometDataUpdateCoordinator
 from .entity import CometEntity
 
@@ -18,29 +19,28 @@ from .entity import CometEntity
 # async_select_option maps it to image="" before calling set_msd_params.
 MSD_IMAGE_NONE = "(none)"
 
+PARALLEL_UPDATES = 1
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: CometConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up GL.iNet Comet select entities."""
-    coordinator: CometDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id][
-        "coordinator"
-    ]
+    coordinator: CometDataUpdateCoordinator = entry.runtime_data.coordinator
     async_add_entities([CometMsdImageSelect(coordinator, entry)])
 
 
 class CometMsdImageSelect(CometEntity, SelectEntity):
     """Select entity for choosing which image is mounted via MSD."""
 
-    _attr_name = "MSD Image"
-    _attr_icon = "mdi:disc"
+    _attr_translation_key = "msd_image"
 
     def __init__(
         self,
         coordinator: CometDataUpdateCoordinator,
-        entry: ConfigEntry,
+        entry: CometConfigEntry,
     ) -> None:
         """Initialize the MSD image select."""
         super().__init__(coordinator, entry)
@@ -89,8 +89,7 @@ class CometMsdImageSelect(CometEntity, SelectEntity):
         except CometError as err:
             raise HomeAssistantError(str(err)) from err
         if self.coordinator.data is not None:
-            drive = self.coordinator.data.setdefault("msd", {}).setdefault("drive", {})
+            drive: dict[str, Any] = {"image": image or None}
             if was_connected:
                 drive["connected"] = False
-            drive["image"] = image or None
-            self.coordinator.async_set_updated_data(self.coordinator.data)
+            self.coordinator.push_partial("msd", {"drive": drive})

@@ -8,6 +8,8 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from types import SimpleNamespace
+
 import pytest
 
 from custom_components.glinet_comet.binary_sensor import (
@@ -64,7 +66,7 @@ def _description(key: str):
 async def _setup(data: dict) -> list:
     coord = make_coordinator(data)
     hass = FakeHass()
-    hass.data[DOMAIN] = {coord.entry.entry_id: {"coordinator": coord}}
+    coord.entry.runtime_data = SimpleNamespace(coordinator=coord, client=None)
     added: list = []
     await async_setup_entry(hass, coord.entry, added.extend)
     return added
@@ -87,7 +89,7 @@ class RecordingAddEntities:
 async def _setup_recording(data: dict) -> tuple[CometDataUpdateCoordinator, RecordingAddEntities]:
     coord = make_coordinator(data)
     hass = FakeHass()
-    hass.data[DOMAIN] = {coord.entry.entry_id: {"coordinator": coord}}
+    coord.entry.runtime_data = SimpleNamespace(coordinator=coord, client=None)
     add = RecordingAddEntities()
     await async_setup_entry(hass, coord.entry, add)
     return coord, add
@@ -267,3 +269,24 @@ async def test_gpio_listener_removed_on_unload_stops_further_adds():
 
     gpio_inputs = [e for e in add.added if isinstance(e, CometGpioInputBinarySensor)]
     assert gpio_inputs == []  # listener was removed -- nothing added
+
+
+def test_atx_binary_sensors_are_poll_only():
+    for key in ("atx_power", "atx_hdd_activity"):
+        assert _description(key).ws_backed is False
+    assert _description("hdmi_signal").ws_backed is True
+
+
+def test_ws_connected_sensor_value_and_availability():
+    desc = _description("ws_connected")
+    assert desc.always_available is True
+    from custom_components.glinet_comet.binary_sensor import CometBinarySensor
+
+    coord = make_coordinator({"ws_connected": False})
+    ent = CometBinarySensor(coord, coord.entry, desc)
+    assert ent.is_on is False
+    assert ent.available is True  # even with WS down
+    coord.data = {"ws_connected": True}
+    assert ent.is_on is True
+    coord.data = None
+    assert ent.available is False

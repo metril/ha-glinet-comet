@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import sys
@@ -655,3 +656,124 @@ async def test_connection_info_403_raises_auth_error_without_a_second_login():
         r for r in session.requests if urlsplit(r[1]).path == "/api/auth/login"
     ]
     assert len(login_requests) == 1
+
+
+# --- login generation guard / rate-limit coercion / result shape -------------
+
+
+class _SlowResp(_FakeResp):
+    async def __aenter__(self):
+        await asyncio.sleep(0.01)
+        return self
+
+
+class _RouteSession(_FakeSession):
+    """Session routing by URL: login responses queued, others always 401/ok."""
+
+    def __init__(self, logins: list, other):
+        super().__init__([])
+        self._logins = list(logins)
+        self._other = other
+
+    def request(self, method, url, **kwargs):
+        self.requests.append((method, url, kwargs))
+        r = self._logins.pop(0) if url.endswith("/api/auth/login") else self._other(kwargs)
+        slow = _SlowResp(r.status, r._payload)
+        return slow
+
+
+def _login_posts(session) -> int:
+    return sum(1 for _, u, _ in session.requests if u.endswith("/api/auth/login"))
+
+
+@pytest.mark.asyncio
+async def test_concurrent_401s_with_failing_login_post_login_once():
+    session = _RouteSession(
+        [_FakeResp(403, {"ok": False, "result": {}})],
+        lambda kw: _FakeResp(401, {"ok": False, "result": {}}),
+    )
+    client = _client(session)
+    client._token = "OLD"
+
+    results = await asyncio.gather(
+        *(client.get_hid() for _ in range(5)), return_exceptions=True
+    )
+
+    assert all(isinstance(r, CometAuthError) for r in results)
+    assert _login_posts(session) == 1
+
+
+@pytest.mark.asyncio
+async def test_concurrent_401s_with_successful_login_share_one_token():
+    session = _RouteSession(
+        [_login_ok("NEW")],
+        lambda kw: (
+            _ok({"connected": True})
+            if kw["headers"]["Token"] == "NEW"
+            else _FakeResp(401, {"ok": False, "result": {}})
+        ),
+    )
+    client = _client(session)
+    client._token = "OLD"
+
+    results = await asyncio.gather(*(client.get_hid() for _ in range(5)))
+
+    assert results == [{"connected": True}] * 5
+    assert _login_posts(session) == 1
+
+
+@pytest.mark.asyncio
+async def test_straggler_401_after_failed_login_shares_failure(monkeypatch):
+    """A 401 arriving after a login already failed for the same stale token
+    must not cost a second login attempt (device lockout counter)."""
+    session = _RouteSession(
+        [_FakeResp(403, {"ok": False, "result": {}})],
+        lambda kw: _FakeResp(401, {"ok": False, "result": {}}),
+    )
+    client = _client(session)
+    client._token = "OLD"
+
+    with pytest.raises(CometAuthError):
+        await client.get_hid()
+    with pytest.raises(CometAuthError):
+        await client.get_hid()  # straggler: lock was free, gen unchanged
+    assert _login_posts(session) == 1
+
+    # Once the share window has passed, a fresh attempt is allowed again.
+    client._login_failed_at -= 1000
+    session._logins.append(_FakeResp(403, {"ok": False, "result": {}}))
+    with pytest.raises(CometAuthError):
+        await client.get_hid()
+    assert _login_posts(session) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "raw,expected",
+    [("30", 30), (0, 1), (None, 600), (12.7, 12), ("abc", 600)],
+)
+async def test_429_remaining_time_is_coerced(raw, expected):
+    session = _FakeSession(
+        [_FakeResp(429, {"ok": False, "result": {"remaining_time": raw}})]
+    )
+    with pytest.raises(CometRateLimitError) as exc_info:
+        await _client(session).async_login()
+    assert exc_info.value.remaining_time == expected
+
+
+@pytest.mark.asyncio
+async def test_ok_body_with_non_dict_result_raises_api_error():
+    session = _FakeSession([_login_ok(), _FakeResp(200, {"ok": True, "result": []})])
+    with pytest.raises(CometApiError) as exc_info:
+        await _client(session).get_hid()
+    assert exc_info.value.status == 200
+
+
+@pytest.mark.asyncio
+async def test_error_body_with_non_dict_result_raises_api_error():
+    session = _FakeSession([_login_ok(), _FakeResp(200, {"ok": False, "result": "boom"})])
+    with pytest.raises(CometApiError):
+        await _client(session).get_hid()
+    session = _FakeSession([_login_ok(), _FakeResp(500, {"ok": False, "result": "boom"})])
+    with pytest.raises(CometApiError):
+        await _client(session).get_hid()

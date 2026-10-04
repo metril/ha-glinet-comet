@@ -10,14 +10,19 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from time import monotonic
 from collections.abc import Awaitable, Callable
-from typing import Any, TypeVar
+from typing import Any, Final, TypeVar
 from urllib.parse import quote, urlencode
 
 import aiohttp
 import pyotp
 
 _LOGGER = logging.getLogger(__name__)
+
+# Seconds during which a failed login is shared with callers whose stale token
+# matches, so one burst of 401s never costs more than one login attempt.
+LOGIN_FAILURE_SHARE_WINDOW: Final = 30.0
 
 _T = TypeVar("_T")
 
@@ -84,6 +89,10 @@ class CometApiClient:
         self._http_timeout = http_timeout
         self._token: str | None = None
         self._login_lock = asyncio.Lock()
+        self._login_gen: int = 0
+        self._last_login_error: CometError | None = None
+        self._login_failed_for: str | None = None
+        self._login_failed_at: float = 0.0
 
     @staticmethod
     def _normalize_host(host: str) -> str:
@@ -142,7 +151,11 @@ class CometApiClient:
                 body = await self._read_json(method, path, resp)
                 if not isinstance(body, dict) or not body.get("ok", False):
                     raise CometApiError(self._envelope_error_message(body), status=200)
-                result = body.get("result") or {}
+                result = body.get("result")
+                if result is None:
+                    result = {}
+                if not isinstance(result, dict):
+                    raise CometApiError("unexpected result shape", status=200)
                 if result.get("two_step_required"):
                     raise CometAuthError(
                         "two-step approval is enabled on the Comet; disable it"
@@ -153,6 +166,7 @@ class CometApiClient:
                         "login response did not include a token", status=200
                     )
                 self._token = token
+                self._last_login_error = None
         except CometError:
             raise
         except asyncio.TimeoutError as err:
@@ -203,12 +217,39 @@ class CometApiClient:
         return await self._reauth(None)
 
     async def _reauth(self, stale_token: str | None) -> str:
-        """Re-login under a lock, reusing a token another caller already got."""
+        """Re-login under a lock, reusing a token another caller already got.
+
+        A burst of concurrent requests that all 401 on the same stale token
+        must cost at most ONE login attempt against the device's lockout
+        counter: waiters share the winner's token, and callers arriving after
+        a login that just failed for the same stale token (within
+        ``LOGIN_FAILURE_SHARE_WINDOW``) re-raise that failure instead of
+        trying again.
+        """
+        gen = self._login_gen
         async with self._login_lock:
             if self._token is not None and self._token != stale_token:
-                # Another coroutine already refreshed the token while we waited.
                 return self._token
-            await self.async_login()
+            if (
+                self._last_login_error is not None
+                and self._login_failed_for == stale_token
+                and (
+                    self._login_gen != gen
+                    or monotonic() - self._login_failed_at < LOGIN_FAILURE_SHARE_WINDOW
+                )
+            ):
+                raise self._last_login_error
+            try:
+                await self.async_login()
+            except CometError as err:
+                self._last_login_error = err
+                self._login_failed_for = stale_token
+                self._login_failed_at = monotonic()
+                self._login_gen += 1
+                raise
+            self._last_login_error = None
+            self._login_failed_for = None
+            self._login_gen += 1
         assert self._token is not None  # noqa: S101 - async_login always sets it
         return self._token
 
@@ -305,7 +346,8 @@ class CometApiClient:
     def _envelope_error_message(body: Any) -> str:
         """Build a CometApiError message from an ``{"ok": false, ...}`` envelope."""
         result = body.get("result") if isinstance(body, dict) else None
-        result = result or {}
+        if not isinstance(result, dict):
+            result = {}
         error = result.get("error", "error")
         error_msg = result.get("error_msg", "")
         return f"{error}: {error_msg}"
@@ -317,7 +359,12 @@ class CometApiClient:
         body = await self._read_json(method, path, resp)
         if not isinstance(body, dict) or not body.get("ok", False):
             raise CometApiError(self._envelope_error_message(body), status=200)
-        return body.get("result") or {}
+        result = body.get("result")
+        if result is None:
+            return {}
+        if not isinstance(result, dict):
+            raise CometApiError("unexpected result shape", status=200)
+        return result
 
     async def _raise_generic_error(
         self, method: str, path: str, resp: aiohttp.ClientResponse
@@ -328,7 +375,9 @@ class CometApiClient:
         except (ValueError, aiohttp.ContentTypeError):
             body = None
         if isinstance(body, dict):
-            result = body.get("result") or {}
+            result = body.get("result")
+            if not isinstance(result, dict):
+                result = {}
             error = result.get("error", "")
             error_msg = result.get("error_msg", "")
             if error or error_msg:
@@ -346,8 +395,12 @@ class CometApiClient:
         except (ValueError, aiohttp.ContentTypeError):
             return 600
         if isinstance(body, dict):
-            result = body.get("result") or {}
-            return result.get("remaining_time", 600)
+            result = body.get("result")
+            if isinstance(result, dict):
+                try:
+                    return max(1, int(float(result.get("remaining_time"))))
+                except (TypeError, ValueError, OverflowError):
+                    return 600
         return 600
 
     # --- Reads ---

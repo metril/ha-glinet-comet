@@ -60,19 +60,19 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import callback
 from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import parsers
+from .data import CometConfigEntry
 from .coordinator import CometDataUpdateCoordinator
 
 _UNSET: Any = object()
 
 
 def async_setup_gpio_entities(
-    entry: ConfigEntry,
+    entry: CometConfigEntry,
     coordinator: CometDataUpdateCoordinator,
     async_add_entities: AddEntitiesCallback,
     kind: str,
@@ -101,6 +101,9 @@ def async_setup_gpio_entities(
     changed ``delay`` reaches the entity without a reload.
     """
     added: set[str] = set()
+    # Channels whose factory returned None: never re-offered, so a later
+    # config change can't give a channel a second entity kind.
+    skipped: set[str] = set()
     last_model: Any = _UNSET
 
     @callback
@@ -114,10 +117,11 @@ def async_setup_gpio_entities(
 
         new: list[Entity] = []
         for channel, config in parsers.gpio_model_channels(data, kind).items():
-            if channel in added:
+            if channel in added or channel in skipped:
                 continue
             entity = factory(channel, config)
             if entity is None:
+                skipped.add(channel)
                 continue
             new.append(entity)
             added.add(channel)

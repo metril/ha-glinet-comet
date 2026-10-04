@@ -15,7 +15,7 @@ jobs:
     name: HACS Validation
     steps:
       - uses: actions/checkout@v4
-      - uses: hacs/action@main
+      - uses: hacs/action@22.5.0
         with:
           category: integration
           ignore: brands
@@ -29,13 +29,16 @@ jobs:
 
   tests:
     runs-on: ubuntu-latest
-    name: Unit tests
+    name: Unit tests (py${{ matrix.python-version }})
+    strategy:
+      matrix:
+        python-version: ["3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
-      - run: pip install pytest pytest-asyncio aiohttp pyotp
+          python-version: ${{ matrix.python-version }}
+      - run: pip install -r requirements-dev.txt
       - run: pytest -q
 
   import-smoke:
@@ -52,6 +55,7 @@ jobs:
       - run: pip install homeassistant pyotp numpy PyTurboJPEG av
       - name: Import all platform modules
         run: |
+          cd "$GITHUB_WORKSPACE"
           python - <<'PY'
           import importlib, sys
           sys.path.insert(0, ".")
@@ -67,6 +71,8 @@ jobs:
               "custom_components.glinet_comet.services",
               "custom_components.glinet_comet.config_flow",
               "custom_components.glinet_comet.diagnostics",
+              "custom_components.glinet_comet.gpio",
+              "custom_components.glinet_comet.data",
           ]
           failed = False
           loaded = {}

@@ -276,6 +276,12 @@ async def test_reconfigure_migrates_host_fallback_unique_id(fake_client):
 # --- options flow ---
 
 
+def test_options_flow_is_options_flow_with_reload():
+    from homeassistant.config_entries import OptionsFlowWithReload
+
+    assert issubclass(config_flow.CometOptionsFlow, OptionsFlowWithReload)
+
+
 async def test_options_flow_round_trip():
     entry = FakeEntry({}, unique_id="SN-1", options={})
     flow = config_flow.CometOptionsFlow()

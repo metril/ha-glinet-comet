@@ -11,13 +11,13 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
     BinarySensorEntityDescription,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import parsers
-from .const import CONF_ENABLE_ATX, DEFAULT_ENABLE_ATX, DOMAIN
+from .data import CometConfigEntry
+from .const import CONF_ENABLE_ATX, DEFAULT_ENABLE_ATX
 from .coordinator import CometDataUpdateCoordinator
 from .entity import CometAtxEntity, CometEntity, CometGpioEntity
 from .gpio import async_setup_gpio_entities
@@ -31,55 +31,70 @@ class CometBinarySensorDescription(BinarySensorEntityDescription):
     # Only created when the enable_atx option is on; served by CometAtxBinarySensor
     # so it also goes unavailable whenever the device reports no ATX board attached.
     requires_atx: bool = False
+    # ATX state only ever arrives via the slow HTTP poll (no WS event observed).
+    ws_backed: bool = True
+    # Available whenever the coordinator has any data (e.g. the WS flag itself).
+    always_available: bool = False
 
 
 BINARY_SENSORS: tuple[CometBinarySensorDescription, ...] = (
     CometBinarySensorDescription(
         key="atx_power",
-        name="ATX Power",
+        ws_backed=False,
+        translation_key="atx_power",
         device_class=BinarySensorDeviceClass.POWER,
         value_fn=parsers.atx_power_on,
         requires_atx=True,
     ),
     CometBinarySensorDescription(
         key="hdmi_signal",
-        name="HDMI Signal",
+        translation_key="hdmi_signal",
         device_class=BinarySensorDeviceClass.CONNECTIVITY,
         value_fn=parsers.hdmi_signal,
     ),
     CometBinarySensorDescription(
         key="keyboard_online",
-        name="Keyboard Online",
+        translation_key="keyboard_online",
         device_class=BinarySensorDeviceClass.CONNECTIVITY,
         entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=parsers.keyboard_online,
     ),
     CometBinarySensorDescription(
         key="mouse_online",
-        name="Mouse Online",
+        translation_key="mouse_online",
         device_class=BinarySensorDeviceClass.CONNECTIVITY,
         entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=parsers.mouse_online,
     ),
     CometBinarySensorDescription(
+        key="ws_connected",
+        translation_key="ws_connected",
+        ws_backed=False,
+        always_available=True,
+        device_class=BinarySensorDeviceClass.CONNECTIVITY,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda data: bool(data.get("ws_connected")),
+    ),
+    CometBinarySensorDescription(
         key="atx_hdd_activity",
-        name="ATX HDD Activity",
+        ws_backed=False,
+        translation_key="atx_hdd_activity",
         device_class=BinarySensorDeviceClass.RUNNING,
         value_fn=parsers.atx_hdd_active,
         requires_atx=True,
     ),
 )
 
+PARALLEL_UPDATES = 0
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: CometConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up GL.iNet Comet binary sensors."""
-    coordinator: CometDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id][
-        "coordinator"
-    ]
+    coordinator: CometDataUpdateCoordinator = entry.runtime_data.coordinator
     enable_atx = entry.options.get(CONF_ENABLE_ATX, DEFAULT_ENABLE_ATX)
 
     entities: list[BinarySensorEntity] = []
@@ -110,13 +125,21 @@ class _CometBinarySensorMixin:
     def __init__(
         self,
         coordinator: CometDataUpdateCoordinator,
-        entry: ConfigEntry,
+        entry: CometConfigEntry,
         description: CometBinarySensorDescription,
     ) -> None:
         """Initialize the binary sensor."""
         super().__init__(coordinator, entry)
         self.entity_description = description
         self._attr_unique_id = f"{entry.entry_id}_{description.key}"
+        self._ws_backed = description.ws_backed
+
+    @property
+    def available(self) -> bool:
+        """Return availability (``always_available`` ignores update failures)."""
+        if self.entity_description.always_available:
+            return self.coordinator.data is not None
+        return super().available
 
     @property
     def is_on(self) -> bool | None:
