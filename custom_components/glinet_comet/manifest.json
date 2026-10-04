@@ -11,7 +11,7 @@
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/metril/ha-glinet-comet/issues",
   "requirements": [
-    "pyotp==2.10.0"
+    "pyotp>=2.10.0"
   ],
   "version": "0.3.0"
 }
