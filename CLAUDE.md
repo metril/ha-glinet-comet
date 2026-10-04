@@ -10,6 +10,9 @@ which runs `glkvm` — GL.iNet's fork of PiKVM's `kvmd`.
   with a slow HTTP-poll tier (`update_interval`, default 300s via
   `CONF_SCAN_INTERVAL`) for reads the socket doesn't carry (hostname,
   network, firmware/upgrade info; `atx` is also polled here — see Gotchas).
+- Setup: `__init__.py` stores `CometRuntimeData(coordinator, client)`
+  (defined in `data.py`) on `entry.runtime_data`; platforms read it from
+  there. HID services are registered once in `async_setup` (`services.py`).
 - State schema (`coordinator._state`): `atx`, `hid`, `msd`, `streamer`,
   `gpio`, `gpio_model`, `gpio_labels`, `info`, `glinet` (hostname/network/
   upgrade_*), `unsupported` (fields the firmware 400'd on, skipped on later

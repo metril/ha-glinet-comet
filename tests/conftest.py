@@ -473,7 +473,29 @@ def _stub_homeassistant() -> None:
         SensorStateClass=_SensorStateClass,
     )
 
+    class _Camera:
+        def __init__(self):
+            pass
+
+    ha_comp_camera = _mod("homeassistant.components.camera", Camera=_Camera)
+
+    class _UpdateDeviceClass:
+        FIRMWARE = "firmware"
+
+    class _UpdateEntity:
+        @property
+        def in_progress(self):
+            return False
+
+    ha_comp_update = _mod(
+        "homeassistant.components.update",
+        UpdateEntity=_UpdateEntity,
+        UpdateDeviceClass=_UpdateDeviceClass,
+    )
+
     ha_components = _mod("homeassistant.components")
+    ha_components.camera = ha_comp_camera
+    ha_components.update = ha_comp_update
     ha_components.sensor = ha_comp_sensor
     ha_components.select = ha_comp_select
     ha_components.switch = ha_comp_switch
@@ -511,6 +533,8 @@ def _stub_homeassistant() -> None:
         "homeassistant.components.button": ha_comp_button,
         "homeassistant.components.sensor": ha_comp_sensor,
         "homeassistant.components.diagnostics": ha_comp_diagnostics,
+        "homeassistant.components.camera": ha_comp_camera,
+        "homeassistant.components.update": ha_comp_update,
     }
     for name, module in modules.items():
         sys.modules.setdefault(name, module)

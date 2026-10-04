@@ -11,6 +11,13 @@ State is pushed from the device over a WebSocket (local push) with a slow
 HTTP-poll tier for the handful of reads (hostname, network, firmware) the
 socket doesn't carry.
 
+## What's new in 0.3.0
+
+New diagnostic entities (WebSocket Connected, Captured FPS, MAC Address,
+Gateway, DHCP), `runtime_data`-based setup, integration-level services, and
+entities that stay available while the WebSocket is up. Requires Home
+Assistant **2025.8** or newer.
+
 ## Entities
 
 | Platform | Entity | Notes |
@@ -18,6 +25,7 @@ socket doesn't carry.
 | binary_sensor | ATX Power | Requires GL.iNet's ATX board; unavailable without one |
 | binary_sensor | ATX HDD Activity | Requires the ATX board |
 | binary_sensor | HDMI Signal | |
+| binary_sensor | WebSocket Connected | Diagnostic |
 | binary_sensor | Keyboard Online | |
 | binary_sensor | Mouse Online | |
 | binary_sensor | GPIO inputs | Only if GPIO channels are configured on the Comet (none on the tested unit); channels configured later appear within one poll interval, no reload needed |
@@ -27,6 +35,10 @@ socket doesn't carry.
 | sensor | Firmware Version | |
 | sensor | IP Address | |
 | sensor | Hostname | |
+| sensor | MAC Address | Diagnostic |
+| sensor | Gateway | Diagnostic |
+| sensor | DHCP | Diagnostic |
+| sensor | Captured FPS | Needs an active video stream |
 | switch | Mouse Jiggler | |
 | switch | HID Connected | |
 | switch | Virtual Media | Connects/disconnects the mounted MSD image; unavailable until an image is selected |
