@@ -11,15 +11,15 @@ from homeassistant.components.button import (
     ButtonEntity,
     ButtonEntityDescription,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import parsers
+from .data import CometConfigEntry
 from .api import CometApiClient, CometError
-from .const import CONF_ENABLE_ATX, DEFAULT_ENABLE_ATX, DOMAIN
+from .const import CONF_ENABLE_ATX, DEFAULT_ENABLE_ATX
 from .coordinator import CometDataUpdateCoordinator
 from .entity import CometAtxEntity, CometEntity, CometGpioEntity
 from .gpio import async_setup_gpio_entities
@@ -86,13 +86,11 @@ BUTTONS: tuple[CometButtonDescription, ...] = (
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: CometConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up GL.iNet Comet buttons."""
-    coordinator: CometDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id][
-        "coordinator"
-    ]
+    coordinator: CometDataUpdateCoordinator = entry.runtime_data.coordinator
     enable_atx = entry.options.get(CONF_ENABLE_ATX, DEFAULT_ENABLE_ATX)
 
     entities: list[ButtonEntity] = []
@@ -127,7 +125,7 @@ class _CometButtonMixin:
     def __init__(
         self,
         coordinator: CometDataUpdateCoordinator,
-        entry: ConfigEntry,
+        entry: CometConfigEntry,
         description: CometButtonDescription,
     ) -> None:
         """Initialize the button."""

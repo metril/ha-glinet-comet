@@ -11,13 +11,13 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
     BinarySensorEntityDescription,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import parsers
-from .const import CONF_ENABLE_ATX, DEFAULT_ENABLE_ATX, DOMAIN
+from .data import CometConfigEntry
+from .const import CONF_ENABLE_ATX, DEFAULT_ENABLE_ATX
 from .coordinator import CometDataUpdateCoordinator
 from .entity import CometAtxEntity, CometEntity, CometGpioEntity
 from .gpio import async_setup_gpio_entities
@@ -73,13 +73,11 @@ BINARY_SENSORS: tuple[CometBinarySensorDescription, ...] = (
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: CometConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up GL.iNet Comet binary sensors."""
-    coordinator: CometDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id][
-        "coordinator"
-    ]
+    coordinator: CometDataUpdateCoordinator = entry.runtime_data.coordinator
     enable_atx = entry.options.get(CONF_ENABLE_ATX, DEFAULT_ENABLE_ATX)
 
     entities: list[BinarySensorEntity] = []
@@ -110,7 +108,7 @@ class _CometBinarySensorMixin:
     def __init__(
         self,
         coordinator: CometDataUpdateCoordinator,
-        entry: ConfigEntry,
+        entry: CometConfigEntry,
         description: CometBinarySensorDescription,
     ) -> None:
         """Initialize the binary sensor."""

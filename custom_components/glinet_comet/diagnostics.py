@@ -5,10 +5,10 @@ from __future__ import annotations
 from typing import Any
 
 from homeassistant.components.diagnostics import async_redact_data
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from .const import CONF_HOST, CONF_PASSWORD, CONF_TOTP_SECRET, CONF_USERNAME, DOMAIN
+from .data import CometConfigEntry
+from .const import CONF_HOST, CONF_PASSWORD, CONF_TOTP_SECRET, CONF_USERNAME
 
 TO_REDACT = {
     CONF_HOST,
@@ -27,7 +27,7 @@ TO_REDACT = {
 
 
 async def async_get_config_entry_diagnostics(
-    hass: HomeAssistant, entry: ConfigEntry
+    hass: HomeAssistant, entry: CometConfigEntry
 ) -> dict[str, Any]:
     """Return diagnostics for a config entry.
 
@@ -35,7 +35,7 @@ async def async_get_config_entry_diagnostics(
     are serialized -- the API client object (and its live token) is never
     included.
     """
-    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    coordinator = entry.runtime_data.coordinator
     return async_redact_data(
         {
             "entry": {

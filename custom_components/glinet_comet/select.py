@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 from homeassistant.components.select import SelectEntity
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import parsers
+from .data import CometConfigEntry
 from .api import CometError
-from .const import DOMAIN
 from .coordinator import CometDataUpdateCoordinator
 from .entity import CometEntity
 
@@ -21,13 +20,11 @@ MSD_IMAGE_NONE = "(none)"
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: CometConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up GL.iNet Comet select entities."""
-    coordinator: CometDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id][
-        "coordinator"
-    ]
+    coordinator: CometDataUpdateCoordinator = entry.runtime_data.coordinator
     async_add_entities([CometMsdImageSelect(coordinator, entry)])
 
 
@@ -40,7 +37,7 @@ class CometMsdImageSelect(CometEntity, SelectEntity):
     def __init__(
         self,
         coordinator: CometDataUpdateCoordinator,
-        entry: ConfigEntry,
+        entry: CometConfigEntry,
     ) -> None:
         """Initialize the MSD image select."""
         super().__init__(coordinator, entry)

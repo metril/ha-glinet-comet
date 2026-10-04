@@ -60,19 +60,19 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import callback
 from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import parsers
+from .data import CometConfigEntry
 from .coordinator import CometDataUpdateCoordinator
 
 _UNSET: Any = object()
 
 
 def async_setup_gpio_entities(
-    entry: ConfigEntry,
+    entry: CometConfigEntry,
     coordinator: CometDataUpdateCoordinator,
     async_add_entities: AddEntitiesCallback,
     kind: str,

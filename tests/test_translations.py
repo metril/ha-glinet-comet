@@ -19,3 +19,11 @@ def test_strings_and_en_translations_are_identical():
         translations = json.load(f)
 
     assert strings == translations
+
+
+def test_exception_translations_present_in_both_files():
+    for name in ("strings.json", os.path.join("translations", "en.json")):
+        with open(os.path.join(COMPONENT_DIR, name), encoding="utf-8") as f:
+            exceptions = json.load(f)["exceptions"]
+        for key in ("device_not_found", "not_comet_device", "command_failed"):
+            assert "message" in exceptions[key]

@@ -5,7 +5,7 @@ from __future__ import annotations
 import voluptuous as vol
 
 from homeassistant.core import HomeAssistant, ServiceCall
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import config_validation as cv, device_registry as dr
 
 from .api import CometApiClient, CometError
@@ -39,34 +39,61 @@ SEND_SHORTCUT_SCHEMA = vol.Schema(
 
 def _client_for_device(hass: HomeAssistant, device_id: str) -> CometApiClient:
     """Resolve a device_id to its GL.iNet Comet API client."""
-    device = dr.async_get(hass).async_get(device_id)
+    registry = dr.async_get(hass)
+    device = registry.async_get(device_id)
     if device is None:
-        raise HomeAssistantError(f"Unknown device: {device_id}")
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="device_not_found",
+            translation_placeholders={"device_id": device_id},
+        )
 
-    for entry_id in device.config_entries:
-        data = hass.data.get(DOMAIN, {}).get(entry_id)
-        if data:
-            return data["client"]
+    loaded = {e.entry_id for e in hass.config_entries.async_loaded_entries(DOMAIN)}
+    for entry in hass.config_entries.async_entries(DOMAIN):
+        if not any(
+            d.id == device_id
+            for d in dr.async_entries_for_config_entry(registry, entry.entry_id)
+        ):
+            continue
+        if entry.entry_id in loaded:
+            return entry.runtime_data.client
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="entry_not_loaded",
+            translation_placeholders={"device_id": device_id},
+        )
 
-    raise HomeAssistantError(f"Device {device_id} is not a GL.iNet Comet")
+    raise ServiceValidationError(
+        translation_domain=DOMAIN,
+        translation_key="not_comet_device",
+        translation_placeholders={"device_id": device_id},
+    )
 
 
 def async_setup_services(hass: HomeAssistant) -> None:
-    """Register the GL.iNet Comet HID services once per Home Assistant instance."""
+    """Register the GL.iNet Comet HID services from the integration-level ``async_setup``."""
 
     async def _handle_type_text(call: ServiceCall) -> None:
         client = _client_for_device(hass, call.data[ATTR_DEVICE_ID])
         try:
             await client.type_text(call.data[ATTR_TEXT], call.data[ATTR_KEYMAP])
         except CometError as err:
-            raise HomeAssistantError(str(err)) from err
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="command_failed",
+                translation_placeholders={"error": str(err)},
+            ) from err
 
     async def _handle_send_shortcut(call: ServiceCall) -> None:
         client = _client_for_device(hass, call.data[ATTR_DEVICE_ID])
         try:
             await client.send_shortcut(call.data[ATTR_KEYS])
         except CometError as err:
-            raise HomeAssistantError(str(err)) from err
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="command_failed",
+                translation_placeholders={"error": str(err)},
+            ) from err
 
     if not hass.services.has_service(DOMAIN, SERVICE_TYPE_TEXT):
         hass.services.async_register(
@@ -79,12 +106,3 @@ def async_setup_services(hass: HomeAssistant) -> None:
             _handle_send_shortcut,
             schema=SEND_SHORTCUT_SCHEMA,
         )
-
-
-def async_unload_services(hass: HomeAssistant) -> None:
-    """Remove the GL.iNet Comet services once no config entries remain."""
-    if hass.data.get(DOMAIN):
-        return
-    for service in (SERVICE_TYPE_TEXT, SERVICE_SEND_SHORTCUT):
-        if hass.services.has_service(DOMAIN, service):
-            hass.services.async_remove(DOMAIN, service)

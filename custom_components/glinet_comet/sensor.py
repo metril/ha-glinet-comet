@@ -7,13 +7,12 @@ from dataclasses import dataclass
 from typing import Any
 
 from homeassistant.components.sensor import SensorEntity, SensorEntityDescription
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import parsers
-from .const import DOMAIN
+from .data import CometConfigEntry
 from .coordinator import CometDataUpdateCoordinator
 from .entity import CometEntity
 
@@ -71,13 +70,11 @@ SENSORS: tuple[CometSensorDescription, ...] = (
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: CometConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up GL.iNet Comet sensors."""
-    coordinator: CometDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id][
-        "coordinator"
-    ]
+    coordinator: CometDataUpdateCoordinator = entry.runtime_data.coordinator
     async_add_entities(CometSensor(coordinator, entry, desc) for desc in SENSORS)
 
 
@@ -89,7 +86,7 @@ class CometSensor(CometEntity, SensorEntity):
     def __init__(
         self,
         coordinator: CometDataUpdateCoordinator,
-        entry: ConfigEntry,
+        entry: CometConfigEntry,
         description: CometSensorDescription,
     ) -> None:
         """Initialize the sensor."""

@@ -108,5 +108,19 @@
         }
       }
     }
+  },
+  "exceptions": {
+    "device_not_found": {
+      "message": "Device {device_id} not found"
+    },
+    "not_comet_device": {
+      "message": "Device {device_id} is not a GL.iNet Comet"
+    },
+    "command_failed": {
+      "message": "Command failed: {error}"
+    },
+    "entry_not_loaded": {
+      "message": "The GL.iNet Comet for device {device_id} is not loaded"
+    }
   }
 }

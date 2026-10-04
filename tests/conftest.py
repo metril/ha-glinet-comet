@@ -195,9 +195,24 @@ def _stub_homeassistant() -> None:
                 "description_placeholders": description_placeholders or {},
             }
 
+    class _OptionsFlowWithReload(_OptionsFlow):
+        """Stand-in for OptionsFlowWithReload (reload handled by real HA)."""
+
+    class _ConfigEntry(Generic[_T]):
+        """Subscriptable stand-in for ConfigEntry with settable runtime_data."""
+
+        def __init__(self, **k) -> None:
+            self.runtime_data = None
+            for key, value in k.items():
+                setattr(self, key, value)
+
+        def __class_getitem__(cls, item):
+            return cls
+
     ha_ce = _mod(
         "homeassistant.config_entries",
-        ConfigEntry=MagicMock,
+        ConfigEntry=_ConfigEntry,
+        OptionsFlowWithReload=_OptionsFlowWithReload,
         ConfigFlow=_ConfigFlow,
         ConfigFlowResult=dict,
         OptionsFlow=_OptionsFlow,
@@ -219,9 +234,23 @@ def _stub_homeassistant() -> None:
         DIAGNOSTIC = "diagnostic"
 
     ha_const = _mod("homeassistant.const", Platform=_Platform, EntityCategory=_EntityCategory)
+    class _HAError(Exception):
+        def __init__(
+            self, *args, translation_domain=None, translation_key=None,
+            translation_placeholders=None,
+        ) -> None:
+            super().__init__(*args)
+            self.translation_domain = translation_domain
+            self.translation_key = translation_key
+            self.translation_placeholders = translation_placeholders
+
+    class _ServiceValidationError(_HAError):
+        pass
+
     ha_exc = _mod(
         "homeassistant.exceptions",
-        HomeAssistantError=type("HomeAssistantError", (Exception,), {}),
+        HomeAssistantError=_HAError,
+        ServiceValidationError=_ServiceValidationError,
         ConfigEntryNotReady=type("ConfigEntryNotReady", (Exception,), {}),
         ConfigEntryAuthFailed=type("ConfigEntryAuthFailed", (Exception,), {}),
         UpdateFailed=type("UpdateFailed", (Exception,), {}),
@@ -285,7 +314,9 @@ def _stub_homeassistant() -> None:
         "homeassistant.helpers.aiohttp_client",
         async_get_clientsession=MagicMock(return_value=MagicMock()),
     )
-    ha_cv = _mod("homeassistant.helpers.config_validation", string=str, boolean=bool)
+    ha_cv = _mod("homeassistant.helpers.config_validation", string=str, boolean=bool,
+        config_entry_only_config_schema=lambda domain: (lambda config: config),
+    )
     ha_evt = _mod(
         "homeassistant.helpers.event",
         async_call_later=lambda hass, delay, action: (lambda: None),
@@ -295,7 +326,9 @@ def _stub_homeassistant() -> None:
         DeviceInfo=dict,
         CONNECTION_NETWORK_MAC="mac",
         async_get=MagicMock(),
+        async_entries_for_config_entry=MagicMock(return_value=[]),
     )
+    ha_typing = _mod("homeassistant.helpers.typing", ConfigType=dict)
     ha_ep = _mod(
         "homeassistant.helpers.entity_platform",
         AddEntitiesCallback=object,
@@ -332,6 +365,7 @@ def _stub_homeassistant() -> None:
     ha_helpers.selector = ha_selector
     ha_helpers.entity_platform = ha_ep
     ha_helpers.entity = ha_entity
+    ha_helpers.typing = ha_typing
 
     # --- homeassistant.components.* (only the bits switch/select/diagnostics use) --
 
@@ -448,6 +482,7 @@ def _stub_homeassistant() -> None:
         "homeassistant.helpers.selector": ha_selector,
         "homeassistant.helpers.entity_platform": ha_ep,
         "homeassistant.helpers.entity": ha_entity,
+        "homeassistant.helpers.typing": ha_typing,
         "homeassistant.components": ha_components,
         "homeassistant.components.select": ha_comp_select,
         "homeassistant.components.switch": ha_comp_switch,

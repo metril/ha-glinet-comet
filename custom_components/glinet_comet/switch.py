@@ -7,14 +7,13 @@ from dataclasses import dataclass
 from typing import Any
 
 from homeassistant.components.switch import SwitchEntity, SwitchEntityDescription
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import parsers
+from .data import CometConfigEntry
 from .api import CometApiClient, CometError
-from .const import DOMAIN
 from .coordinator import CometDataUpdateCoordinator
 from .entity import CometEntity, CometGpioEntity
 from .gpio import async_setup_gpio_entities
@@ -77,13 +76,11 @@ SWITCHES: tuple[CometSwitchDescription, ...] = (
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: CometConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up GL.iNet Comet switches."""
-    coordinator: CometDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id][
-        "coordinator"
-    ]
+    coordinator: CometDataUpdateCoordinator = entry.runtime_data.coordinator
     entities: list[SwitchEntity] = [
         CometSwitch(coordinator, entry, desc) for desc in SWITCHES
     ]
@@ -109,7 +106,7 @@ class CometSwitch(CometEntity, SwitchEntity):
     def __init__(
         self,
         coordinator: CometDataUpdateCoordinator,
-        entry: ConfigEntry,
+        entry: CometConfigEntry,
         description: CometSwitchDescription,
     ) -> None:
         """Initialize the switch."""
@@ -162,7 +159,7 @@ class CometMsdConnectedSwitch(CometEntity, SwitchEntity):
     def __init__(
         self,
         coordinator: CometDataUpdateCoordinator,
-        entry: ConfigEntry,
+        entry: CometConfigEntry,
     ) -> None:
         """Initialize the MSD connected switch."""
         super().__init__(coordinator, entry)

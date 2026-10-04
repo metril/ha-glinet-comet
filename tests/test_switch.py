@@ -8,6 +8,8 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from types import SimpleNamespace
+
 import pytest
 
 from custom_components.glinet_comet.api import CometApiError
@@ -221,7 +223,7 @@ async def _setup(data: dict) -> list:
     coord = CometDataUpdateCoordinator(FakeHass(), FakeEntry(), FakeClient())
     coord.data = data
     hass = FakeHass()
-    hass.data[DOMAIN] = {coord.entry.entry_id: {"coordinator": coord}}
+    coord.entry.runtime_data = SimpleNamespace(coordinator=coord, client=None)
     added: list = []
     await async_setup_entry(hass, coord.entry, added.extend)
     return added
@@ -282,7 +284,7 @@ async def _setup_recording(data: dict) -> tuple[CometDataUpdateCoordinator, Reco
     coord = CometDataUpdateCoordinator(FakeHass(), FakeEntry(), FakeClient())
     coord.data = data
     hass = FakeHass()
-    hass.data[DOMAIN] = {coord.entry.entry_id: {"coordinator": coord}}
+    coord.entry.runtime_data = SimpleNamespace(coordinator=coord, client=None)
     add = RecordingAddEntities()
     await async_setup_entry(hass, coord.entry, add)
     return coord, add
