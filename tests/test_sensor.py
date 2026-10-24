@@ -61,6 +61,10 @@ def test_dhcp_static():
     assert _sensor("dhcp", {})[1].native_value is None
 
 
+def test_captured_fps_disabled_by_default():
+    assert _sensor("captured_fps", {})[0].entity_registry_enabled_default is False
+
+
 def test_captured_fps():
     data = {"streamer": {"streamer": {"source": {"captured_fps": 60}}}}
     desc, ent = _sensor("captured_fps", data)

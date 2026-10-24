@@ -70,7 +70,7 @@
           "ws_reconnect_delay": "How long to wait before reconnecting a dropped WebSocket connection",
           "http_timeout": "Timeout for HTTP API requests",
           "enable_atx": "Create ATX power entities (requires GL.iNet's ATX board; entities are unavailable without it)",
-          "keep_video_active": "Keep the Comet's video capture running so HDMI signal, resolution, and the Screen camera stay live (uses Comet CPU); off = only while someone views the web UI"
+          "keep_video_active": "Keep the Comet's video capture running so HDMI signal, resolution, FPS, and the Screen camera snapshot work (uses Comet CPU); off (default) = only while someone views the web UI"
         }
       }
     }

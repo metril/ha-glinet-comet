@@ -10,6 +10,7 @@ imports -- it operates purely on the coordinator's ``dict`` state.
 
 from __future__ import annotations
 
+from collections import Counter
 from typing import Any
 
 
@@ -460,11 +461,26 @@ def _number(value: Any) -> float | int | None:
     return value
 
 
+# One-entry caches keyed on the raw ``switch_model.ports`` list object (held
+# here and compared with ``is``, so a recycled id() can never alias).
+_ports_cache: tuple[list[Any], list[dict[str, Any]]] | None = None
+_options_cache: tuple[list[Any], dict[str, str]] | None = None
+
+
 def switch_ports(data: dict[str, Any]) -> list[dict[str, Any]]:
     """Return the switch model's port dicts that have a str ``id`` and int ``channel``."""
+    global _ports_cache
     ports = _dig(data, "switch_model.ports")
     if not isinstance(ports, list):
         return []
+    if _ports_cache is not None and _ports_cache[0] is ports:
+        return _ports_cache[1]
+    result = _filter_ports(ports)
+    _ports_cache = (ports, result)
+    return result
+
+
+def _filter_ports(ports: list[Any]) -> list[dict[str, Any]]:
     return [
         p
         for p in ports
@@ -493,12 +509,20 @@ def switch_port_name(port: dict[str, Any]) -> str:
 
 def switch_port_options(data: dict[str, Any]) -> dict[str, str]:
     """Return ``{display_name: port_id}``; duplicate names get ``"name (id)"``."""
+    global _options_cache
+    raw = _dig(data, "switch_model.ports")
+    if isinstance(raw, list) and _options_cache is not None and _options_cache[0] is raw:
+        return _options_cache[1]
     ports = switch_ports(data)
     names = [switch_port_name(p) for p in ports]
-    return {
-        (f"{name} ({p['id']})" if names.count(name) > 1 else name): p["id"]
+    counts = Counter(names)
+    result = {
+        (f"{name} ({p['id']})" if counts[name] > 1 else name): p["id"]
         for p, name in zip(ports, names)
     }
+    if isinstance(raw, list):
+        _options_cache = (raw, result)
+    return result
 
 
 def switch_active_port_id(data: dict[str, Any]) -> str | None:

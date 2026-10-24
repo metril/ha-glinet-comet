@@ -97,6 +97,7 @@ SENSORS: tuple[CometSensorDescription, ...] = (
     CometSensorDescription(
         key="captured_fps",
         translation_key="captured_fps",
+        entity_registry_enabled_default=False,
         entity_category=EntityCategory.DIAGNOSTIC,
         state_class=SensorStateClass.MEASUREMENT,
         native_unit_of_measurement="fps",

@@ -1309,8 +1309,8 @@ async def test_slow_gated_reads_skipped_within_interval():
     await coord._async_update_data()
     for name in ("get_info_system", "get_upgrade_version", "get_upgrade_compare"):
         assert client.calls[name] == 1, name
-    # hostname/network are never gated: an IP change must show within a cycle.
-    assert client.calls["get_hostname"] == 2
+    assert client.calls["get_hostname"] == 1
+    # network is never gated: an IP change must show within a cycle.
     assert client.calls["get_network_config"] == 2
     # Past the interval the gated reads happen again.
     for key in list(coord._slow_last):
@@ -1481,3 +1481,120 @@ def test_switch_non_dict_model_and_event_ignored():
     coord._process_switch_event({"model": [1]})
     coord._process_switch_event([1])  # type: ignore[arg-type]
     assert coord._state["switch_model"] == {}
+
+
+def test_keep_video_active_defaults_off():
+    from custom_components.glinet_comet.const import DEFAULT_KEEP_VIDEO_ACTIVE
+
+    assert DEFAULT_KEEP_VIDEO_ACTIVE is False
+    assert make_coordinator(FakeClient())._keep_video_active is False
+
+
+# --- change detection / registry sync / ws-gated polls ------------------------
+
+
+def _ws_frame_listener_count(coord, frame):
+    calls = []
+    coord.async_update_listeners = lambda: calls.append(1)
+    coord._process_ws_message(frame)
+    return len(calls)
+
+
+def test_identical_ws_frame_does_not_notify_listeners():
+    coord = make_coordinator(FakeClient())
+    frame = {"event_type": "atx", "event": {"busy": True, "leds": {"hdd": False}}}
+    assert _ws_frame_listener_count(coord, frame) == 1
+    assert _ws_frame_listener_count(coord, frame) == 0
+    frame2 = {"event_type": "atx", "event": {"busy": False}}
+    assert _ws_frame_listener_count(coord, frame2) == 1
+
+
+def test_identical_msd_storage_and_switch_model_frames_do_not_notify():
+    coord = make_coordinator(FakeClient())
+    msd = {"event_type": "msd", "event": {"storage": {"images": {"a": 1}}}}
+    sw = {"event_type": "switch", "event": {"model": {"ports": []}, "summary": {"x": 1}}}
+    for frame in (msd, sw):
+        assert _ws_frame_listener_count(coord, frame) == 1
+        assert _ws_frame_listener_count(coord, frame) == 0
+    msd["event"] = {"storage": {"images": {}}}
+    assert _ws_frame_listener_count(coord, msd) == 1
+
+
+def test_deep_merge_reports_change():
+    from custom_components.glinet_comet.coordinator import _deep_merge
+
+    d = {"a": {"b": 1}, "l": [1]}
+    assert _deep_merge(d, {"a": {"b": 1}, "l": [1]}) is False
+    assert _deep_merge(d, {"a": {"b": 2}}) is True
+    assert _deep_merge(d, {"l": [1, 2]}) is True
+
+
+@pytest.mark.asyncio
+async def test_sw_version_change_updates_device_registry(monkeypatch):
+    from custom_components.glinet_comet import coordinator as mod
+
+    registry = Mock()
+    registry.async_get_device.return_value = Mock(id="dev1")
+    monkeypatch.setattr(mod.dr, "async_get", lambda hass: registry)
+    coord = make_coordinator(FakeClient())
+    await coord._async_update_data()
+    await coord._async_update_data()
+    registry.async_update_device.assert_not_called()
+    coord._state["glinet"]["upgrade_version"] = {"version": "V9"}
+    await coord._async_update_data()
+    registry.async_get_device.assert_called_with(
+        identifiers={("glinet_comet", "test_entry")}
+    )
+    registry.async_update_device.assert_called_once_with("dev1", sw_version="V9")
+    await coord._async_update_data()
+    registry.async_update_device.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_sw_version_change_without_device_is_silent(monkeypatch):
+    from custom_components.glinet_comet import coordinator as mod
+
+    registry = Mock()
+    registry.async_get_device.return_value = None
+    monkeypatch.setattr(mod.dr, "async_get", lambda hass: registry)
+    coord = make_coordinator(FakeClient())
+    await coord._async_update_data()
+    coord._state["glinet"]["upgrade_version"] = {"version": "V9"}
+    await coord._async_update_data()
+    registry.async_update_device.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_hid_streamer_skipped_while_ws_connected_but_failure_tier_holds():
+    client = FakeClient()
+    coord = make_coordinator(client)
+    coord._state["ws_connected"] = True
+    await coord._async_update_data()
+    assert "get_hid" not in client.calls and "get_streamer" not in client.calls
+    assert client.calls["get_atx"] == 1 and client.calls["get_msd"] == 1
+    assert coord._had_successful_cycle
+    # "all failed" considers only issued reads (atx, msd; info_system gated out).
+    client.fail_always("get_atx", CometApiError("x", status=500))
+    client.fail_always("get_info_system", CometApiError("x", status=500))
+    client.fail_always("get_msd", CometApiError("x", status=500))
+    coord._slow_last.clear()
+    with pytest.raises(UpdateFailed):
+        await coord._async_update_data()
+    # Socket down: polled again.
+    coord._state["ws_connected"] = False
+    client2 = FakeClient()
+    coord2 = make_coordinator(client2)
+    await coord2._async_update_data()
+    assert client2.calls["get_hid"] == 1 and client2.calls["get_streamer"] == 1
+
+
+@pytest.mark.asyncio
+async def test_hostname_gated_and_rearmed_on_ws_reconnect():
+    client = FakeClient()
+    coord = make_coordinator(client)
+    coord._ws_has_connected_once = True
+    client.ws_to_return = FakeWS([FakeWSMsg(aiohttp.WSMsgType.CLOSED)])
+    await coord._async_update_data()
+    assert "hostname" in coord._slow_last
+    await coord._ws_connect_and_listen()
+    assert "hostname" not in coord._slow_last

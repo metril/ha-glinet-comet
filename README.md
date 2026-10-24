@@ -19,6 +19,13 @@ Comet X (GL-RM4PE) support: Active Port select, per-port video/USB link and
 ATX entities, CPU/memory/temperature/network health sensors (firmware
 V1.10.1+), and a Mouse Output select.
 
+Efficiency: fewer slow-tier reads (`hid`/`streamer` are skipped while the
+WebSocket is up, `hostname` is throttled, the unused `hw` read is gone), no
+state fan-out on unchanged WebSocket frames, firmware upgrades now reach the
+device registry, and video capture is off by default (enable "Keep video
+capture active" for the HDMI/resolution/FPS sensors and camera snapshot). The
+Captured FPS sensor is disabled by default.
+
 ## What's new in 0.3.0
 
 New diagnostic entities (WebSocket Connected, Captured FPS, MAC Address,
@@ -141,7 +148,7 @@ valid for a ±30 second window.
 | WebSocket reconnect delay (seconds) | 5 | Delay before reconnecting a dropped WebSocket. |
 | HTTP request timeout (seconds) | 10 | |
 | Enable ATX power control | On | Creates the ATX entities. Requires GL.iNet's ATX board — the entities exist but stay unavailable without one. |
-| Keep video capture active | On | Keeps the Comet's video pipeline running so HDMI Signal, Resolution, and the Screen camera stay live, at the cost of Comet CPU. Off: those only update while someone is viewing the Comet's own web UI. |
+| Keep video capture active | Off | Keeps the Comet's video pipeline running so the HDMI Signal, Resolution, and FPS sensors and the Screen camera snapshot stay live, at the cost of Comet CPU. Off (default): those only update while someone is viewing the Comet's own web UI. |
 
 ## Notes / gotchas
 

@@ -48,6 +48,7 @@ import aiohttp
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import (
@@ -58,6 +59,7 @@ from .api import (
     CometError,
     CometRateLimitError,
 )
+from . import parsers
 from .const import (
     CONF_KEEP_VIDEO_ACTIVE,
     CONF_SCAN_INTERVAL,
@@ -72,11 +74,11 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 # Rarely-changing reads, re-read at most once per SLOW_READ_INTERVAL.
-# hostname/network are deliberately NOT gated: they are the GL.iNet-specific
-# reads the slow tier exists for, and an IP/DHCP change must show within
+# network is deliberately NOT gated: an IP/DHCP change must show within
 # one update_interval.
 _SLOW_GATED = (
     "info_system",
+    "hostname",
     "upgrade_version",
     "upgrade_compare",
 )
@@ -86,17 +88,26 @@ _WS_BACKOFF_CAP = 300
 _WS_STABLE_SECONDS = 60
 
 
-def _deep_merge(dest: dict[str, Any], src: dict[str, Any]) -> None:
+def _deep_merge(dest: dict[str, Any], src: dict[str, Any]) -> bool:
     """Recursively merge ``src`` into ``dest`` in place.
 
     A partial update (e.g. a WS frame carrying only ``{"busy": true}``) must
-    never wipe sibling keys already present in ``dest``.
+    never wipe sibling keys already present in ``dest``. Returns whether
+    anything in ``dest`` actually changed.
     """
+    changed = False
     for key, value in src.items():
         if isinstance(value, dict) and isinstance(dest.get(key), dict):
-            _deep_merge(dest[key], value)
-        else:
+            if _deep_merge(dest[key], value):
+                changed = True
+        elif (
+            key not in dest
+            or dest[key] != value
+            or type(dest[key]) is not type(value)
+        ):
             dest[key] = value
+            changed = True
+    return changed
 
 
 class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -126,6 +137,7 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._ws_has_connected_once = False
         # Last successful read time per slow-gated key (see _SLOW_GATED).
         self._slow_last: dict[str, float] = {}
+        self._last_sw_version: str | None = None
         self._ws_failures = 0
         self._ws_connected_at: float | None = None
         self._state: dict[str, Any] = {
@@ -143,7 +155,7 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "unsupported": [],
             "ws_connected": False,
         }
-        self._ws_handlers: dict[str, Callable[[dict[str, Any]], None]] = {
+        self._ws_handlers: dict[str, Callable[[dict[str, Any]], bool]] = {
             "atx": self._process_atx_event,
             "hid": self._process_hid_event,
             "msd": self._process_msd_event,
@@ -192,14 +204,14 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         core: dict[str, Any] = {
             "atx": self.client.get_atx(),
-            # hid/msd/streamer are read every cycle, not just bootstrapped
-            # once: no WS event carries hid/msd/streamer writes back (MSD in
-            # particular pushes nothing), so this poll is the only way state
-            # resyncs after one.
-            "hid": self.client.get_hid(),
+            # msd is read every cycle: MSD writes push nothing over the WS.
             "msd": self.client.get_msd(),
-            "streamer": self.client.get_streamer(),
         }
+        if not self.ws_connected:
+            # hid/streamer are WS-pushed; poll them only while the socket is
+            # down (resync source of truth).
+            core["hid"] = self.client.get_hid()
+            core["streamer"] = self.client.get_streamer()
         if due("info_system"):
             core["info_system"] = self.client.get_info("system")
         optional: dict[str, Any] = {}
@@ -210,7 +222,6 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if key not in unsupported and (key not in _SLOW_GATED or due(key)):
                 optional[key] = factory()
 
-        add_optional("hw", lambda: self.client.get_info("hw"))
         add_optional("health", lambda: self.client.get_info("health"))
         add_optional("switch", lambda: self.client.get_switch())
         add_optional("hostname", lambda: self.client.get_hostname())
@@ -314,11 +325,31 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # not count as "the first successful cycle".
         if any(not isinstance(by_key[key], BaseException) for key in core):
             self._had_successful_cycle = True
+        self._sync_sw_version()
         return dict(self._state)
+
+    def _sync_sw_version(self) -> None:
+        """Push a changed firmware version into the device registry.
+
+        HA reads ``device_info`` once at registration, so an upgrade would
+        otherwise never reach the registry.
+        """
+        version = parsers.firmware_version(self._state)
+        if version is None or version == self._last_sw_version:
+            return
+        previous, self._last_sw_version = self._last_sw_version, version
+        if previous is None:
+            return  # first observation: entities register with this value
+        registry = dr.async_get(self.hass)
+        device = registry.async_get_device(
+            identifiers={(DOMAIN, self.entry.entry_id)}
+        )
+        if device is not None:
+            registry.async_update_device(device.id, sw_version=version)
 
     def _apply_read(self, key: str, result: dict[str, Any]) -> None:
         """Route one successful slow-tier read into coordinator state."""
-        if key in ("info_system", "hw", "health"):
+        if key in ("info_system", "health"):
             self._process_info_event(result)
         elif key == "atx":
             self._process_atx_event(result)
@@ -433,7 +464,7 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._set_ws_connected(True)
         if reconnect:
             # Static reads may have changed while we were away (reboot/upgrade).
-            for key in ("info_system", "upgrade_version"):
+            for key in ("info_system", "upgrade_version", "hostname"):
                 self._slow_last.pop(key, None)
             coro = self.async_request_refresh()
             name = f"{DOMAIN}_refresh_{self.entry.entry_id}"
@@ -494,8 +525,8 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # Includes hid_keymaps/ocr/recorder/fingerbot/serial/rndis/turn/
             # ap/repeater/modem and any other frame we don't model yet.
             return
-        handler(event)
-        self._push_state()
+        if handler(event):
+            self._push_state()
 
     def push_partial(self, subsystem: str, patch: dict[str, Any]) -> None:
         """Deep-merge ``patch`` into ``_state[subsystem]`` and publish (optimistic updates)."""
@@ -512,19 +543,19 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     # --- Merge handlers (all merge; never wholesale-replace a subsystem) -----
 
-    def _process_atx_event(self, event: dict[str, Any]) -> None:
-        """Merge an ATX GET result or WS ``atx`` event."""
-        _deep_merge(self._state["atx"], event)
+    def _process_atx_event(self, event: dict[str, Any]) -> bool:
+        """Merge an ATX GET result or WS ``atx`` event; return whether it changed."""
+        return _deep_merge(self._state["atx"], event)
 
-    def _process_hid_event(self, event: dict[str, Any]) -> None:
-        """Merge an HID GET result or WS ``hid`` event."""
-        _deep_merge(self._state["hid"], event)
+    def _process_hid_event(self, event: dict[str, Any]) -> bool:
+        """Merge an HID GET result or WS ``hid`` event; return whether it changed."""
+        return _deep_merge(self._state["hid"], event)
 
-    def _process_streamer_event(self, event: dict[str, Any]) -> None:
-        """Merge a streamer GET result or WS ``streamer`` event."""
-        _deep_merge(self._state["streamer"], event)
+    def _process_streamer_event(self, event: dict[str, Any]) -> bool:
+        """Merge a streamer GET result or WS ``streamer`` event; return changed."""
+        return _deep_merge(self._state["streamer"], event)
 
-    def _process_msd_event(self, event: dict[str, Any]) -> None:
+    def _process_msd_event(self, event: dict[str, Any]) -> bool:
         """Merge an MSD GET result or WS ``msd`` event.
 
         ``storage`` is replaced wholesale (not merged) when present, since a
@@ -533,11 +564,13 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         msd = self._state["msd"]
         storage = event.get("storage")
         rest = {k: v for k, v in event.items() if k != "storage"}
-        _deep_merge(msd, rest)
-        if storage is not None:
+        changed = _deep_merge(msd, rest)
+        if storage is not None and msd.get("storage") != storage:
             msd["storage"] = storage
+            changed = True
+        return changed
 
-    def _process_gpio_event(self, event: dict[str, Any]) -> None:
+    def _process_gpio_event(self, event: dict[str, Any]) -> bool:
         """Merge a WS ``gpio`` event's channel states, per-channel.
 
         Handles both the full ``{"state": {"inputs", "outputs"}}`` shape
@@ -547,14 +580,19 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """
         state = event.get("state", event)
         if not isinstance(state, dict):
-            return
+            return False
         gpio = self._state["gpio"]
-        if isinstance(state.get("inputs"), dict):
-            _deep_merge(gpio.setdefault("inputs", {}), state["inputs"])
-        if isinstance(state.get("outputs"), dict):
-            _deep_merge(gpio.setdefault("outputs", {}), state["outputs"])
+        changed = False
+        for part in ("inputs", "outputs"):
+            if isinstance(state.get(part), dict):
+                if part not in gpio:
+                    gpio[part] = {}
+                    changed = True
+                if _deep_merge(gpio[part], state[part]):
+                    changed = True
+        return changed
 
-    def _process_gpio_full(self, event: dict[str, Any]) -> None:
+    def _process_gpio_full(self, event: dict[str, Any]) -> bool:
         """Replace GPIO model/state/labels from a full ``GET /api/gpio`` result.
 
         Every level is type-guarded: firmware sending the wrong type anywhere
@@ -571,7 +609,7 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # The HTTP path (_apply_read) can hand this a non-dict `result`
             # on odd firmware -- treat it as "nothing to apply" rather than
             # raising out of the update cycle.
-            return
+            return False
         model = event.get("model")
         if not isinstance(model, dict):
             model = {}
@@ -584,16 +622,23 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         scheme_inputs = scheme.get("inputs")
         scheme_outputs = scheme.get("outputs")
-        self._state["gpio_model"] = {
+        changed = False
+        new_model = {
             "inputs": scheme_inputs if isinstance(scheme_inputs, dict) else {},
             "outputs": scheme_outputs if isinstance(scheme_outputs, dict) else {},
         }
+        if new_model != self._state["gpio_model"]:
+            self._state["gpio_model"] = new_model
+            changed = True
         state_inputs = state.get("inputs")
         state_outputs = state.get("outputs")
-        self._state["gpio"] = {
+        new_gpio = {
             "inputs": state_inputs if isinstance(state_inputs, dict) else {},
             "outputs": state_outputs if isinstance(state_outputs, dict) else {},
         }
+        if new_gpio != self._state["gpio"]:
+            self._state["gpio"] = new_gpio
+            changed = True
 
         # Parse view.table for human-readable channel labels: each row can
         # carry a label cell plus one or more input/output channel cells, all
@@ -620,9 +665,12 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if label_text:
                 for ch in channel_names:
                     labels[ch] = label_text
-        self._state["gpio_labels"] = labels
+        if labels != self._state["gpio_labels"]:
+            self._state["gpio_labels"] = labels
+            changed = True
+        return changed
 
-    def _process_switch_event(self, event: dict[str, Any]) -> None:
+    def _process_switch_event(self, event: dict[str, Any]) -> bool:
         """Merge a ``switch`` event/read; ``model`` replaces ``switch_model`` wholesale.
 
         WS deltas are partial (``summary``, ``video``, ...), so everything but
@@ -630,13 +678,17 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         ``_deep_merge``, which is right for the per-port arrays).
         """
         if not isinstance(event, dict):
-            return
+            return False
+        changed = False
         model = event.get("model")
-        if isinstance(model, dict):
+        if isinstance(model, dict) and model != self._state["switch_model"]:
             self._state["switch_model"] = model
+            changed = True
         rest = {k: v for k, v in event.items() if k != "model"}
-        _deep_merge(self._state["switch"], rest)
+        if _deep_merge(self._state["switch"], rest):
+            changed = True
+        return changed
 
-    def _process_info_event(self, event: dict[str, Any]) -> None:
+    def _process_info_event(self, event: dict[str, Any]) -> bool:
         """Merge one or more ``info`` sections (``{"system": {...}}``, ...)."""
-        _deep_merge(self._state["info"], event)
+        return _deep_merge(self._state["info"], event)

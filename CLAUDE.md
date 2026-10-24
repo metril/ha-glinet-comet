@@ -81,9 +81,10 @@ which runs `glkvm` — GL.iNet's fork of PiKVM's `kvmd`.
   Token read from `result.token` (top-level `token` also checked).
   Self-signed cert: aiohttp `ssl=False` unless `verify_ssl` is set.
 - Authenticated HTTP requests send header `Token: <token>`. WebSocket:
-  `wss://<host>/api/ws?stream=<0|1>&auth_token=<token>` — `stream=1` is the
-  default (`keep_video_active` option), since kvmd only keeps its video
-  pipeline running while a `stream=1` client is connected.
+  `wss://<host>/api/ws?stream=<0|1>&auth_token=<token>` — `stream=0` is the
+  default (video off; `keep_video_active` option turns on `stream=1`), since
+  kvmd only keeps its video pipeline running while a `stream=1` client is
+  connected. HDMI/resolution/fps sensors and camera snapshot need it on.
 - On `401`/`403` (HTTP or WS handshake), re-login **once** and retry; a
   second failure raises `CometAuthError` → `ConfigEntryAuthFailed` (HA
   reauth). `429` raises `CometRateLimitError(remaining_time)` →
@@ -109,7 +110,7 @@ which runs `glkvm` — GL.iNet's fork of PiKVM's `kvmd`.
   whether an optional read is unsupported: only `400`/`404` mark a field
   `unsupported` (skipped thereafter), any other status just retries next
   cycle.
-- `info?fields=hw` 400s everywhere seen; `info?fields=health` 400s on
+- `info?fields=hw` 400s everywhere seen (no longer read); `info?fields=health` 400s on
   V1.9.1 but is 200 on V1.10.1 (both models; `fan` also 400). It's an
   optional read: health sensors are skipped when `health` is in
   `unsupported`, and WS `info.health` merges into `info.health`.

@@ -901,3 +901,13 @@ def test_mouse_outputs(rm4pe):
     assert parsers.mouse_outputs_available({}) == []
     assert parsers.mouse_output_active({}) is None
     assert parsers.mouse_outputs_available({"hid": {"mouse": {"outputs": {"available": ["", 1, "usb"]}}}}) == ["usb"]
+
+
+def test_switch_port_options_cached_by_model_identity():
+    ports = [{"id": "1.1", "channel": 0, "name": "A"}, {"id": "1.2", "channel": 1, "name": "A"}]
+    data = {"switch_model": {"ports": ports}}
+    first = parsers.switch_port_options(data)
+    assert first == {"A (1.1)": "1.1", "A (1.2)": "1.2"}
+    assert parsers.switch_port_options(data) is first
+    data2 = {"switch_model": {"ports": [{"id": "1.1", "channel": 0, "name": "B"}]}}
+    assert parsers.switch_port_options(data2) == {"B": "1.1"}
