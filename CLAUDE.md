@@ -85,6 +85,14 @@ which runs `glkvm` — GL.iNet's fork of PiKVM's `kvmd`.
   default (video off; `keep_video_active` option turns on `stream=1`), since
   kvmd only keeps its video pipeline running while a `stream=1` client is
   connected. HDMI/resolution/fps sensors and camera snapshot need it on.
+  **Verified 2026-10-24:** sufficient on the Comet X (bare `stream=1` socket
+  → pipeline up in ~2s, snapshot 200, idles ~10s after close). **Not
+  sufficient on the Comet PoE** (fw V1.10.1): streamer stays non-null but
+  `hdmi.signal`/`source.online` are false and snapshot 503s until a real
+  web-UI WebRTC viewer (`pion/ws`) has been open; drops ~40s after it
+  closes. Tested and ruled out as kicks: `/api/media/ws` + h264 `start`,
+  `pion/ws` config without SDP, `POST streamer/set_params?gl_webrtc=true`.
+  Documented as a README limitation; a WebRTC client in HA is out of scope.
 - On `401`/`403` (HTTP or WS handshake), re-login **once** and retry; a
   second failure raises `CometAuthError` → `ConfigEntryAuthFailed` (HA
   reauth). `429` raises `CometRateLimitError(remaining_time)` →

@@ -148,7 +148,7 @@ valid for a ±30 second window.
 | WebSocket reconnect delay (seconds) | 5 | Delay before reconnecting a dropped WebSocket. |
 | HTTP request timeout (seconds) | 10 | |
 | Enable ATX power control | On | Creates the ATX entities. Requires GL.iNet's ATX board — the entities exist but stay unavailable without one. |
-| Keep video capture active | Off | Keeps the Comet's video pipeline running so the HDMI Signal, Resolution, and FPS sensors and the Screen camera snapshot stay live, at the cost of Comet CPU. Off (default): those only update while someone is viewing the Comet's own web UI. |
+| Keep video capture active | Off | Keeps the Comet's video pipeline running so the HDMI Signal, Resolution, and FPS sensors and the Screen camera snapshot stay live, at the cost of Comet CPU. Off (default): those only update while someone is viewing the Comet's own web UI. **Known limitation:** on the Comet PoE (GL-RM1PE, fw V1.10.1) this is not enough: the device keeps its streamer process alive but reports no HDMI signal and the snapshot returns 503 until a real web-UI (WebRTC) viewer has been open; the capture drops again ~40 s after the viewer closes. The Comet X (GL-RM4PE) does not have this problem. |
 
 ## Notes / gotchas
 
