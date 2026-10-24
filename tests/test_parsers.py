@@ -37,6 +37,11 @@ def active() -> dict:
 
 
 @pytest.fixture(scope="module")
+def rm4pe() -> dict:
+    return _load("state_live_rm4pe.json")
+
+
+@pytest.fixture(scope="module")
 def gpio() -> dict:
     return _load("state_gpio.json")
 
@@ -809,3 +814,90 @@ def test_gpio_pulse_delay_missing_defaults_to_zero():
 def test_gpio_pulse_delay_non_dict_config():
     assert parsers.gpio_pulse_delay(None) == 0.0
     assert parsers.gpio_pulse_delay("garbage") == 0.0
+
+
+# --- Comet X switch / health / mouse outputs -----------------------------------
+
+
+def test_switch_ports_and_default_names(rm4pe):
+    ports = parsers.switch_ports(rm4pe)
+    assert [p["id"] for p in ports] == ["1.1", "1.2", "1.3", "1.4"]
+    assert [parsers.switch_port_name(p) for p in ports] == [f"Port {i}" for i in (1, 2, 3, 4)]
+
+
+def test_switch_ports_filters_malformed_and_empty():
+    assert parsers.switch_ports({}) == []
+    data = {
+        "switch_model": {
+            "ports": [{"id": "1.1", "channel": 0}, {"id": 1, "channel": 1}, {"id": "x"}, "z",
+                      {"id": "y", "channel": True}]
+        }
+    }
+    assert [p["id"] for p in parsers.switch_ports(data)] == ["1.1"]
+
+
+def test_switch_port_name_strips_and_blank_falls_back():
+    assert parsers.switch_port_name({"id": "1.1", "channel": 0, "name": "  NAS "}) == "NAS"
+    assert parsers.switch_port_name({"id": "1.3", "channel": 2, "name": "   "}) == "Port 3"
+
+
+def test_switch_port_options_disambiguates_duplicates(rm4pe):
+    assert parsers.switch_port_options(rm4pe)["Port 2"] == "1.2"
+    data = {
+        "switch_model": {
+            "ports": [
+                {"id": "1.1", "channel": 0, "name": "PC"},
+                {"id": "1.2", "channel": 1, "name": "PC"},
+                {"id": "1.3", "channel": 2, "name": ""},
+            ]
+        }
+    }
+    assert parsers.switch_port_options(data) == {
+        "PC (1.1)": "1.1",
+        "PC (1.2)": "1.2",
+        "Port 3": "1.3",
+    }
+
+
+def test_switch_active_port_and_port_lookup(rm4pe):
+    assert parsers.switch_active_port_id(rm4pe) == "1.2"
+    assert parsers.switch_active_port_id({}) is None
+    assert parsers.switch_port(rm4pe, "1.4")["channel"] == 3
+    assert parsers.switch_port(rm4pe, "9.9") is None
+
+
+def test_switch_links_and_leds(rm4pe):
+    assert parsers.switch_link(rm4pe, "video", 0) is False
+    assert parsers.switch_link(rm4pe, "usb_otg", 3) is False
+    assert parsers.switch_link(rm4pe, "video", 4) is None
+    assert parsers.switch_link({}, "video", 0) is None
+    # ATX LED arrays are empty without a GL-ATXPC board
+    assert parsers.switch_atx_led(rm4pe, "power", 0) is None
+    data = {"switch": {"atx": {"leds": {"power": [True], "hdd": ["x"]}}}}
+    assert parsers.switch_atx_led(data, "power", 0) is True
+    assert parsers.switch_atx_led(data, "hdd", 0) is None
+    assert parsers.switch_atx_led(data, "power", 1) is None
+
+
+def test_health_values(rm4pe):
+    assert parsers.health_cpu_percent(rm4pe) == 30
+    assert parsers.health_mem_percent(rm4pe) == 18.1
+    assert parsers.health_cpu_temp(rm4pe) == 42.92
+    assert parsers.health_net_rx_rate(rm4pe) == 40869
+    assert parsers.health_net_tx_rate(rm4pe) == 29570
+
+
+def test_health_missing_or_bool_is_none(live):
+    assert parsers.health_cpu_percent(live) is None
+    assert parsers.health_cpu_temp({"info": {"health": {"temp": {"cpu": True}}}}) is None
+    assert parsers.health_mem_percent({"info": {"health": {"mem": {"percent": "5"}}}}) is None
+
+
+def test_mouse_outputs(rm4pe):
+    assert parsers.mouse_outputs_available(rm4pe) == [
+        "usb", "usb_rel", "usb_hybrid", "usb_touch"
+    ]
+    assert parsers.mouse_output_active(rm4pe) == "usb"
+    assert parsers.mouse_outputs_available({}) == []
+    assert parsers.mouse_output_active({}) is None
+    assert parsers.mouse_outputs_available({"hid": {"mouse": {"outputs": {"available": ["", 1, "usb"]}}}}) == ["usb"]

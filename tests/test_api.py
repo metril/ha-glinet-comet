@@ -777,3 +777,53 @@ async def test_error_body_with_non_dict_result_raises_api_error():
     session = _FakeSession([_login_ok(), _FakeResp(500, {"ok": False, "result": "boom"})])
     with pytest.raises(CometApiError):
         await _client(session).get_hid()
+
+
+@pytest.mark.asyncio
+async def test_get_switch_url():
+    session = _FakeSession([_login_ok(), _ok({"summary": {}})])
+    client = _client(session)
+
+    assert await client.get_switch() == {"summary": {}}
+    method, url, _ = session.requests[-1]
+    assert method == "GET"
+    assert urlsplit(url).path == "/api/switch"
+
+
+@pytest.mark.asyncio
+async def test_switch_set_active_encodes_port():
+    session = _FakeSession([_login_ok(), _ok({})])
+    client = _client(session)
+
+    await client.switch_set_active("1.2")
+    method, url, _ = session.requests[-1]
+    assert method == "POST"
+    parts = urlsplit(url)
+    assert parts.path == "/api/switch/set_active"
+    assert parse_qs(parts.query) == {"port": ["1.2"]}
+
+
+@pytest.mark.asyncio
+async def test_switch_atx_click_params():
+    session = _FakeSession([_login_ok(), _ok({})])
+    client = _client(session)
+
+    await client.switch_atx_click("1.2", "power_long")
+    method, url, _ = session.requests[-1]
+    assert method == "POST"
+    parts = urlsplit(url)
+    assert parts.path == "/api/switch/atx/click"
+    assert parse_qs(parts.query) == {"port": ["1.2"], "button": ["power_long"]}
+
+
+@pytest.mark.asyncio
+async def test_set_hid_mouse_output_params():
+    session = _FakeSession([_login_ok(), _ok({})])
+    client = _client(session)
+
+    await client.set_hid_mouse_output("usb_rel")
+    method, url, _ = session.requests[-1]
+    assert method == "POST"
+    parts = urlsplit(url)
+    assert parts.path == "/api/hid/set_params"
+    assert parse_qs(parts.query) == {"mouse_output": ["usb_rel"]}

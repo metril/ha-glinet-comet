@@ -260,9 +260,9 @@ async def test_gpio_listener_removed_on_unload_stops_further_adds():
     invoking the stored remover (as HA does on unload) must stop it from
     reacting to further coordinator updates."""
     coord, add = await _setup_recording({})
-    assert len(coord.entry.unload_callbacks) == 1
-    remove = coord.entry.unload_callbacks[0]
-    remove()
+    assert len(coord.entry.unload_callbacks) >= 1
+    for remove in coord.entry.unload_callbacks:
+        remove()
 
     coord.data = _load("state_gpio.json")  # a brand-new gpio_model
     coord.async_update_listeners()
@@ -290,3 +290,59 @@ def test_ws_connected_sensor_value_and_availability():
     assert ent.is_on is True
     coord.data = None
     assert ent.available is False
+
+
+# --- Comet X switch ports ---
+
+
+def _setup_ports(data: dict, options: dict | None = None) -> tuple[list, CometDataUpdateCoordinator]:
+    import asyncio
+
+    coord = make_coordinator(data)
+    coord.entry.options = options or {}
+    hass = FakeHass()
+    coord.entry.runtime_data = SimpleNamespace(coordinator=coord, client=None)
+    added: list = []
+    asyncio.run(async_setup_entry(hass, coord.entry, added.extend))
+    return added, coord
+
+
+def _ports(added):
+    from custom_components.glinet_comet.binary_sensor import CometSwitchPortBinarySensor
+
+    return [e for e in added if isinstance(e, CometSwitchPortBinarySensor)]
+
+
+def test_rm4pe_creates_link_sensors_only_when_atx_off():
+    added, _ = _setup_ports(_load("state_live_rm4pe.json"), {"enable_atx": False})
+    assert len(_ports(added)) == 8
+
+
+def test_rm4pe_atx_on_creates_leds_unavailable_without_values():
+    added, _ = _setup_ports(_load("state_live_rm4pe.json"), {"enable_atx": True})
+    ports = _ports(added)
+    assert len(ports) == 16
+    video = next(e for e in ports if e._attr_unique_id.endswith("switch_port_0_video"))
+    assert video.name == "Port 1 Video Link"
+    assert video.is_on in (True, False)
+    led = next(e for e in ports if e._attr_unique_id.endswith("switch_port_0_power"))
+    assert led.is_on is None
+    assert led.available is False
+
+
+def test_poe_with_switch_unsupported_creates_no_ports():
+    data = _load("state_live.json")
+    data["unsupported"] = ["switch"]
+    added, _ = _setup_ports(data, {"enable_atx": True})
+    assert _ports(added) == []
+
+
+def test_late_switch_model_adds_ports_once():
+    data = _load("state_live.json")
+    added, coord = _setup_ports(data, {"enable_atx": False})
+    assert _ports(added) == []
+    rm4 = _load("state_live_rm4pe.json")
+    coord.data = {**data, "switch": rm4["switch"], "switch_model": rm4["switch_model"]}
+    coord.async_update_listeners()
+    coord.async_update_listeners()
+    assert len(_ports(added)) == 8

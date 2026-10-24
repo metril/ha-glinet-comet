@@ -451,3 +451,106 @@ def gpio_display_name(channel: str, labels: dict[str, Any] | None) -> str:
         if label is not None:
             return label
     return channel.replace("_", " ").title()
+
+
+def _number(value: Any) -> float | int | None:
+    """Return ``value`` if it's a real number (bools rejected), else ``None``."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return value
+
+
+def switch_ports(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return the switch model's port dicts that have a str ``id`` and int ``channel``."""
+    ports = _dig(data, "switch_model.ports")
+    if not isinstance(ports, list):
+        return []
+    return [
+        p
+        for p in ports
+        if isinstance(p, dict)
+        and isinstance(p.get("id"), str)
+        and isinstance(p.get("channel"), int)
+        and not isinstance(p.get("channel"), bool)
+    ]
+
+
+def switch_port(data: dict[str, Any], port_id: str) -> dict[str, Any] | None:
+    """Return the port dict with ``id == port_id`` (``None`` on miss)."""
+    for port in switch_ports(data):
+        if port["id"] == port_id:
+            return port
+    return None
+
+
+def switch_port_name(port: dict[str, Any]) -> str:
+    """Return a port's user name, or ``"Port N"`` (1-based channel) when blank."""
+    name = _as_str(port.get("name"))
+    if name is not None:
+        name = name.strip()
+    return name or f"Port {port['channel'] + 1}"
+
+
+def switch_port_options(data: dict[str, Any]) -> dict[str, str]:
+    """Return ``{display_name: port_id}``; duplicate names get ``"name (id)"``."""
+    ports = switch_ports(data)
+    names = [switch_port_name(p) for p in ports]
+    return {
+        (f"{name} ({p['id']})" if names.count(name) > 1 else name): p["id"]
+        for p, name in zip(ports, names)
+    }
+
+
+def switch_active_port_id(data: dict[str, Any]) -> str | None:
+    """Return ``switch.summary.active_id`` when it's a non-empty string."""
+    return _as_str(_dig(data, "switch.summary.active_id"))
+
+
+def switch_link(data: dict[str, Any], kind: str, index: int) -> bool | None:
+    """Return ``switch.<kind>.links[index]`` (``kind``: ``video``/``usb_otg``) or ``None``."""
+    value = _dig(data, f"switch.{kind}.links.{index}")
+    return value if isinstance(value, bool) else None
+
+
+def switch_atx_led(data: dict[str, Any], led: str, index: int) -> bool | None:
+    """Return ``switch.atx.leds.<led>[index]`` (``power``/``hdd``) or ``None``."""
+    value = _dig(data, f"switch.atx.leds.{led}.{index}")
+    return value if isinstance(value, bool) else None
+
+
+def health_cpu_percent(data: dict[str, Any]) -> float | int | None:
+    """Return ``info.health.cpu.percent``."""
+    return _number(_dig(data, "info.health.cpu.percent"))
+
+
+def health_mem_percent(data: dict[str, Any]) -> float | int | None:
+    """Return ``info.health.mem.percent``."""
+    return _number(_dig(data, "info.health.mem.percent"))
+
+
+def health_cpu_temp(data: dict[str, Any]) -> float | int | None:
+    """Return ``info.health.temp.cpu`` in degrees C."""
+    return _number(_dig(data, "info.health.temp.cpu"))
+
+
+def health_net_rx_rate(data: dict[str, Any]) -> float | int | None:
+    """Return ``info.health.net.rx_rate`` in bytes/s."""
+    return _number(_dig(data, "info.health.net.rx_rate"))
+
+
+def health_net_tx_rate(data: dict[str, Any]) -> float | int | None:
+    """Return ``info.health.net.tx_rate`` in bytes/s."""
+    return _number(_dig(data, "info.health.net.tx_rate"))
+
+
+def mouse_outputs_available(data: dict[str, Any]) -> list[str]:
+    """Return ``hid.mouse.outputs.available`` filtered to non-empty strings."""
+    avail = _dig(data, "hid.mouse.outputs.available")
+    if not isinstance(avail, list):
+        return []
+    return [o for o in avail if isinstance(o, str) and o]
+
+
+def mouse_output_active(data: dict[str, Any]) -> str | None:
+    """Return ``hid.mouse.outputs.active`` when it's a non-empty string."""
+    return _as_str(_dig(data, "hid.mouse.outputs.active"))

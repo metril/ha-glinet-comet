@@ -7,11 +7,12 @@ from dataclasses import dataclass
 from typing import Any
 
 from homeassistant.components.sensor import (
+    SensorDeviceClass,
     SensorEntity,
     SensorEntityDescription,
     SensorStateClass,
 )
-from homeassistant.const import EntityCategory
+from homeassistant.const import PERCENTAGE, EntityCategory, UnitOfDataRate, UnitOfTemperature
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -27,6 +28,8 @@ class CometSensorDescription(SensorEntityDescription):
 
     value_fn: Callable[[dict[str, Any]], Any] = lambda data: None
     ws_backed: bool = True
+    # Skipped when the firmware 400'd on ``info?fields=health`` (``unsupported``).
+    requires_health: bool = False
 
 
 SENSORS: tuple[CometSensorDescription, ...] = (
@@ -99,6 +102,56 @@ SENSORS: tuple[CometSensorDescription, ...] = (
         native_unit_of_measurement="fps",
         value_fn=parsers.captured_fps,
     ),
+    CometSensorDescription(
+        key="cpu_percent",
+        translation_key="cpu_percent",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=PERCENTAGE,
+        value_fn=parsers.health_cpu_percent,
+        requires_health=True,
+    ),
+    CometSensorDescription(
+        key="mem_percent",
+        translation_key="mem_percent",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=PERCENTAGE,
+        value_fn=parsers.health_mem_percent,
+        requires_health=True,
+    ),
+    CometSensorDescription(
+        key="cpu_temp",
+        translation_key="cpu_temp",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        value_fn=parsers.health_cpu_temp,
+        requires_health=True,
+    ),
+    CometSensorDescription(
+        key="net_rx_rate",
+        translation_key="net_rx_rate",
+        device_class=SensorDeviceClass.DATA_RATE,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfDataRate.BYTES_PER_SECOND,
+        entity_registry_enabled_default=False,
+        value_fn=parsers.health_net_rx_rate,
+        requires_health=True,
+    ),
+    CometSensorDescription(
+        key="net_tx_rate",
+        translation_key="net_tx_rate",
+        device_class=SensorDeviceClass.DATA_RATE,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfDataRate.BYTES_PER_SECOND,
+        entity_registry_enabled_default=False,
+        value_fn=parsers.health_net_tx_rate,
+        requires_health=True,
+    ),
 )
 
 PARALLEL_UPDATES = 0
@@ -111,7 +164,12 @@ async def async_setup_entry(
 ) -> None:
     """Set up GL.iNet Comet sensors."""
     coordinator: CometDataUpdateCoordinator = entry.runtime_data.coordinator
-    async_add_entities(CometSensor(coordinator, entry, desc) for desc in SENSORS)
+    unsupported = (coordinator.data or {}).get("unsupported") or ()
+    async_add_entities(
+        CometSensor(coordinator, entry, desc)
+        for desc in SENSORS
+        if not (desc.requires_health and "health" in unsupported)
+    )
 
 
 class CometSensor(CometEntity, SensorEntity):

@@ -233,7 +233,20 @@ def _stub_homeassistant() -> None:
         CONFIG = "config"
         DIAGNOSTIC = "diagnostic"
 
-    ha_const = _mod("homeassistant.const", Platform=_Platform, EntityCategory=_EntityCategory)
+    class _UnitOfTemperature:
+        CELSIUS = "°C"
+
+    class _UnitOfDataRate:
+        BYTES_PER_SECOND = "B/s"
+
+    ha_const = _mod(
+        "homeassistant.const",
+        Platform=_Platform,
+        EntityCategory=_EntityCategory,
+        PERCENTAGE="%",
+        UnitOfTemperature=_UnitOfTemperature,
+        UnitOfDataRate=_UnitOfDataRate,
+    )
     class _HAError(Exception):
         def __init__(
             self, *args, translation_domain=None, translation_key=None,
@@ -459,9 +472,14 @@ def _stub_homeassistant() -> None:
     class _SensorEntityDescription(_EntityDescription):
         state_class: str | None = None
         native_unit_of_measurement: str | None = None
+        entity_registry_enabled_default: bool = True
 
     class _SensorEntity:
         pass
+
+    class _SensorDeviceClass:
+        TEMPERATURE = "temperature"
+        DATA_RATE = "data_rate"
 
     class _SensorStateClass:
         MEASUREMENT = "measurement"
@@ -470,6 +488,7 @@ def _stub_homeassistant() -> None:
         "homeassistant.components.sensor",
         SensorEntity=_SensorEntity,
         SensorEntityDescription=_SensorEntityDescription,
+        SensorDeviceClass=_SensorDeviceClass,
         SensorStateClass=_SensorStateClass,
     )
 
@@ -528,6 +547,7 @@ def _stub_homeassistant() -> None:
         "homeassistant.helpers.typing": ha_typing,
         "homeassistant.components": ha_components,
         "homeassistant.components.select": ha_comp_select,
+        "homeassistant.components.sensor": ha_comp_sensor,
         "homeassistant.components.switch": ha_comp_switch,
         "homeassistant.components.binary_sensor": ha_comp_binary_sensor,
         "homeassistant.components.button": ha_comp_button,

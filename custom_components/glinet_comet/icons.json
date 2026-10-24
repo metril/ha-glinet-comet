@@ -18,6 +18,18 @@
       },
       "hostname": {
         "default": "mdi:dns"
+      },
+      "cpu_percent": {
+        "default": "mdi:cpu-64-bit"
+      },
+      "mem_percent": {
+        "default": "mdi:memory"
+      },
+      "net_rx_rate": {
+        "default": "mdi:download-network"
+      },
+      "net_tx_rate": {
+        "default": "mdi:upload-network"
       }
     },
     "button": {
@@ -48,6 +60,12 @@
     "select": {
       "msd_image": {
         "default": "mdi:disc"
+      },
+      "active_port": {
+        "default": "mdi:video-switch"
+      },
+      "mouse_output": {
+        "default": "mdi:mouse"
       }
     }
   }

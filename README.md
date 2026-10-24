@@ -1,15 +1,23 @@
 # GL.iNet Comet
 
 A Home Assistant custom integration for the [GL.iNet Comet / Comet PoE KVM](https://www.gl-inet.com/products/gl-rm1/)
-(GL-RM1 / GL-RM1PE) — a network KVM running GL.iNet's `glkvm` firmware, a fork
+(GL-RM1 / GL-RM1PE) and Comet X (GL-RM4PE) — a network KVM running GL.iNet's `glkvm` firmware, a fork
 of [PiKVM's](https://pikvm.org/) `kvmd`.
 
-Tested against a GL-RM1PE on firmware **V1.9.1 release1** with 2FA enabled.
-Other Comet models/firmware versions should work but are unverified.
+Supported models: Comet (GL-RM1), Comet PoE (GL-RM1PE), Comet X (GL-RM4PE,
+4-port switch). Tested against a GL-RM1PE on firmware **V1.9.1 release1**
+(2FA enabled) and a GL-RM4PE on **V1.10.1 release4**. Port-switch and
+mouse-output *writes* are unverified on live hardware.
 
 State is pushed from the device over a WebSocket (local push) with a slow
 HTTP-poll tier for the handful of reads (hostname, network, firmware) the
 socket doesn't carry.
+
+## What's new in 0.4.0
+
+Comet X (GL-RM4PE) support: Active Port select, per-port video/USB link and
+ATX entities, CPU/memory/temperature/network health sensors (firmware
+V1.10.1+), and a Mouse Output select.
 
 ## What's new in 0.3.0
 
@@ -29,6 +37,8 @@ Assistant **2025.8** or newer.
 | binary_sensor | Keyboard Online | |
 | binary_sensor | Mouse Online | |
 | binary_sensor | GPIO inputs | Only if GPIO channels are configured on the Comet (none on the tested unit); channels configured later appear within one poll interval, no reload needed |
+| binary_sensor | Port N Video Link / USB Link | Comet X only; one pair per port |
+| binary_sensor | Port N Power LED / HDD Activity | Comet X only; needs the ATX option and GL.iNet's ATX board (unavailable otherwise) |
 | sensor | Resolution | |
 | sensor | MSD Image | Currently mounted virtual-media image |
 | sensor | KVMD Version | |
@@ -39,6 +49,8 @@ Assistant **2025.8** or newer.
 | sensor | Gateway | Diagnostic |
 | sensor | DHCP | Diagnostic |
 | sensor | Captured FPS | Needs an active video stream |
+| sensor | CPU Usage / Memory Usage / CPU Temperature | Diagnostic; firmware V1.10.1+ (skipped where unsupported) |
+| sensor | Network RX Rate / TX Rate | Diagnostic; disabled by default |
 | switch | Mouse Jiggler | |
 | switch | HID Connected | |
 | switch | Virtual Media | Connects/disconnects the mounted MSD image; unavailable until an image is selected |
@@ -49,7 +61,10 @@ Assistant **2025.8** or newer.
 | button | Reset HID | |
 | button | Reboot | Reboots the Comet — see [Notes](#notes--gotchas) |
 | button | GPIO pulse outputs | Only if GPIO channels are configured on the Comet (none on the tested unit); channels configured later appear within one poll interval, no reload needed |
+| button | Port N ATX Power / Power (Long Press) / Reset | Comet X only; needs the ATX option |
 | select | MSD Image | Choose which uploaded image is mounted |
+| select | Active Port | Comet X only; switches the active target port |
+| select | Mouse Output | Config; HID mouse output mode (usb, usb_rel, ...) |
 | camera | Screen | JPEG snapshot of the captured video, not a live stream |
 | update | Firmware | Read-only — see [Notes](#notes--gotchas) |
 
@@ -139,8 +154,10 @@ valid for a ±30 second window.
 - **No ATX board**: the device this integration was developed and tested
   against has no GL.iNet ATX board attached, so the ATX entities are
   present but unavailable on it — ATX behavior is unverified live.
-- **No CPU / memory / temperature sensors**: this firmware (V1.9.1) doesn't
-  expose those fields via its info API, so there's nothing to surface.
+- **Health sensors**: CPU / memory / temperature / network rates need
+  firmware V1.10.1+ (V1.9.1 400s on them; they're then not created).
+- **Comet X ports**: port entities appear only where the device exposes
+  `/api/switch` (the Comet PoE on V1.10.1 release2 404s it).
 - **MSD images**: images must be uploaded to the Comet through its own web
   UI first; the `MSD Image` select only chooses among images already there.
 - **Firmware**: the Firmware update entity is read-only — it shows when

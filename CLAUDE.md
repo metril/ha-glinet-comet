@@ -14,7 +14,9 @@ which runs `glkvm` — GL.iNet's fork of PiKVM's `kvmd`.
   (defined in `data.py`) on `entry.runtime_data`; platforms read it from
   there. HID services are registered once in `async_setup` (`services.py`).
 - State schema (`coordinator._state`): `atx`, `hid`, `msd`, `streamer`,
-  `gpio`, `gpio_model`, `gpio_labels`, `info`, `glinet` (hostname/network/
+  `gpio`, `gpio_model`, `gpio_labels`, `switch`, `switch_model` (replaced
+  wholesale on a model frame, like `gpio_model`), `info` (incl.
+  `info.health`), `glinet` (hostname/network/
   upgrade_*), `unsupported` (fields the firmware 400'd on, skipped on later
   cycles), `ws_connected`.
 - WS-pushed state is applied via `self.data = dict(self._state)` +
@@ -58,7 +60,8 @@ which runs `glkvm` — GL.iNet's fork of PiKVM's `kvmd`.
 - Entity names/icons live in `strings.json` + `translations/en.json` (kept
   identical) under `entity.<platform>.<translation_key>` and `icons.json`;
   static entities use `translation_key`, never hard-coded `name=`/`icon=`
-  (GPIO entities keep their live label). Test enforces key coverage.
+  (GPIO entities and per-port Comet X entities keep a live `name`). Test
+  enforces key coverage.
 - `PARALLEL_UPDATES`: 0 for read-only platforms (binary_sensor, sensor,
   camera, update), 1 for button/switch/select.
 - WS reconnect backs off exponentially from `ws_reconnect_delay` (cap 300s;
@@ -106,9 +109,17 @@ which runs `glkvm` — GL.iNet's fork of PiKVM's `kvmd`.
   whether an optional read is unsupported: only `400`/`404` mark a field
   `unsupported` (skipped thereafter), any other status just retries next
   cycle.
-- `info?fields=hw` and `info?fields=health` both 400 on V1.9.1 — this
-  firmware exposes no CPU/mem/temp/network metrics at all; don't
-  reintroduce those sensors without re-verifying on other firmware.
+- `info?fields=hw` 400s everywhere seen; `info?fields=health` 400s on
+  V1.9.1 but is 200 on V1.10.1 (both models; `fan` also 400). It's an
+  optional read: health sensors are skipped when `health` is in
+  `unsupported`, and WS `info.health` merges into `info.health`.
+- `GET /api/switch` (+ WS `switch`, partial deltas) is 200 on Comet X,
+  404 on the PoE (V1.10.1 release2) → `unsupported`, no port entities.
+  Port entities/selects are added dynamically via `switch_ports.py`
+  (object-identity guard on `switch_model`, per-port dedupe, never removed).
+  `custom_screen/status` is 200 on the X only. Switch writes
+  (`switch/set_active`, `switch/atx/click`) and `hid/set_params?mouse_output`
+  are unverified live; never use `switch/reset` (reboots the unit).
 - `streamer.streamer` can be `null` and the snapshot endpoint can 503 when
   no one has an active video viewer — always null-check / JPEG-magic-check
   (`\xff\xd8`, see `get_snapshot`) rather than assuming a shape.
@@ -184,7 +195,7 @@ Reads (`GET /api/<path>`, shapes below unwrapped from
 - `msd` [200]: `{"available_devices":{...},"drive":{"cdrom":true,"connected":false,"image":null,"rw":false},"drive_partition":{...},"enabled":true,"online":false,"storage":{"images":{},"parts":{...}}}` — `connected` lives at `msd.drive.connected`; `images` at `msd.storage.images` (empty here).
 - `streamer` [200]: `{"features":{...},"limits":{...},"params":{"desired_fps":40,"h264_bitrate":2000-20000,"h264_gop":30-60,"quality":80,"venc_mode":"normal"|"smart",...},"streamer":{...}|null}` — **`streamer.streamer` is sometimes `null`** (seen when the streamer/snapshot was 503ing — see Snapshot below); consumers must null-check it. When populated (a separate run): `streamer.streamer.hdmi:{"out_signal":false,"signal":true}`, `.source:{"captured_fps":60,"online":true,"real_resolution":"1920x1080@60","resolution":{"height":1080,"width":1920}}` — both `source.online`/`.resolution` confirmed to exist when the subsystem is up. `params` also changed between runs (2000/30/normal vs 20000/60/smart) — it's live, mutable state, not static config.
 - `gpio` [200]: `{"model":{"scheme":{"inputs":{},"outputs":{}},"view":{"header":{...},"table":[]}},"state":{"inputs":{},"outputs":{}}}` — no GPIO channels configured on this unit.
-- `info?fields=system,auth,meta,extras` [200]: sections confirmed `auth`,`extras`,`meta`,`system` (all present as one combined GET). `info?fields=hw` → **400** `ValidatorError`, "Failed sub-validator on one of the item of ['hw']" — upstream kvmd's legacy `hw` field is **also invalid** on this fork, same as `health`. **No CPU/mem/temp/network health metrics are exposed via `/api/info` on this firmware at all** (neither `health` nor `hw`); the plan's `system.health.*` sensors need a different source or should be dropped for v0.1.
+- `info?fields=system,auth,meta,extras` [200]: sections confirmed `auth`,`extras`,`meta`,`system` (all present as one combined GET). `info?fields=hw` → **400** `ValidatorError`, "Failed sub-validator on one of the item of ['hw']" — upstream kvmd's legacy `hw` field is **also invalid** on this fork, same as `health`. **No CPU/mem/temp/network health metrics are exposed via `/api/info` on this firmware at all** (neither `health` nor `hw`); superseded: `health` is 200 on V1.10.1 (see Comet X section).
 - `system/get_hostname` [200]: `{"hostname":"<redacted>","success":true}` — flat under `result`.
 - `system/get_network_config` [200]: `{"config":{"dns_servers":["<redacted>","..."],"gateway":"<redacted>","interface":"eth0","ip_address":"<redacted>","is_dhcp":true,"mac_address":"<redacted>","state":"online"},"success":true}`.
 - `system/get_param` [200]: `{"absolute_mouse":true,"cdrom_vendor":"Glinet","otg_manufacturer":"Glinet","otg_serial":"<redacted>","privacy_enable":false,"success":true}` — static hardware/OTG descriptors, not live state.
@@ -197,13 +208,22 @@ Reads (`GET /api/<path>`, shapes below unwrapped from
 WS events seen in 30s, first frame was `loop`:
 
 - `loop` (×1): `{"version":{"major":4,"minor":82}}`.
-- `info` (×4, **one section per frame** — merge, don't expect one shot): `auth` (`{"enabled":true}`), `meta` (`{"kvm":{},"server":{"host":"<redacted>"}}`), `system` (`kernel`, `kvmd.version`, `platform.{base,board,model,serial,type,video}` — **`serial` exists**, redacted — `streamer`), `extras` (per-daemon list: ipmi/janus/media/pion/vnc/webrtc, each `{enabled,started,...}`). No `health` section ever appeared, matching the GET 400 above.
+- `info` (×4, **one section per frame** — merge, don't expect one shot): `auth` (`{"enabled":true}`), `meta` (`{"kvm":{},"server":{"host":"<redacted>"}}`), `system` (`kernel`, `kvmd.version`, `platform.{base,board,model,serial,type,video}` — **`serial` exists**, redacted — `streamer`), `extras` (per-daemon list: ipmi/janus/media/pion/vnc/webrtc, each `{enabled,started,...}`). No `health` section appeared on V1.9.1, matching the GET 400 (V1.10.1 does push it).
 - `hid`, `msd`, `gpio`, `streamer` (×1+ each): **identical shape to their GET counterpart** (the unwrapped `result`), including `streamer.streamer` also arriving `null` in the same run the GET showed it `null`. One run saw `hid` fire twice with `mouse.online` flipping `true`→`false` between frames — live confirmation the push events reflect real state changes.
 - `hid_keymaps` (×1): `{"keymaps":{"available":["ar","bepo","...34 layouts"],"default":"en-us"}}`.
 - `ocr` (×1): `{"enabled":false,"engine":"tesseract","langs":{"available":[],"default":[]}}`.
 - `recorder` (×1): `{"elapsed_seconds":0,"file":"","recording":false}`.
 - `fingerbot` (×1): `{"exist":false}`.
 - **No `atx` event fired in 30s, confirmed across two separate runs.** Unlike `fingerbot`/`ocr` (absent/disabled features that still pushed a status once), ATX pushed nothing — needs a longer capture or an ATX state change to confirm if/when it ever does.
+
+## Verified shapes: Comet X (GL-RM4PE, live 2026-10-24, fw V1.10.1 release4)
+
+Existing reads match the RM1PE shapes. New:
+
+- `switch`: `model.ports[] {id:"1.1".."1.4", channel:0-3, name:"", atx.click_delays}`, `summary {active_id, active_port, synced}`, `video.links[4]`, `usb_otg.links[4]`, `atx {busy[], leds{power[], hdd[]}}` (per-port arrays, empty without a GL-ATXPC board); other keys (`beacons/colors/edids/units`) ignored.
+- `info.health`: `cpu.percent`, `mem.percent`, `temp.cpu`, `net.rx_rate/tx_rate`, `throttling`.
+- `hid.mouse.outputs {active:"usb", available:[usb,usb_rel,usb_hybrid,usb_touch]}` (also on the PoE).
+- Fixture: `tests/fixtures/state_live_rm4pe.json`.
 
 ## Destructive GET routes — never probe
 

@@ -109,6 +109,16 @@ UPGRADE_COMPARE_RESULT = {
 }
 
 
+SWITCH_RESULT = {
+    "model": {"ports": [{"id": "1.1", "channel": 0, "name": ""}]},
+    "summary": {"active_id": "1.1", "active_port": 0, "synced": True},
+    "video": {"links": [True, False, False, False]},
+    "usb_otg": {"links": [True, False, False, False]},
+    "atx": {"busy": [], "leds": {"hdd": [], "power": []}},
+}
+HEALTH_RESULT = {"health": {"cpu": {"percent": 30}, "temp": {"cpu": 42.9}}}
+
+
 class FakeClient:
     """Fake CometApiClient: records call counts, scriptable failures."""
 
@@ -139,6 +149,8 @@ class FakeClient:
             return await self._call(
                 "get_info_hw", {"hw": {"health": {}, "platform": {}}}
             )
+        if fields == "health":
+            return await self._call("get_info_health", copy.deepcopy(HEALTH_RESULT))
         raise AssertionError(f"unexpected fields={fields!r}")
 
     async def get_hid(self):
@@ -152,6 +164,9 @@ class FakeClient:
 
     async def get_gpio(self):
         return await self._call("get_gpio", copy.deepcopy(GPIO_RESULT))
+
+    async def get_switch(self):
+        return await self._call("get_switch", copy.deepcopy(SWITCH_RESULT))
 
     async def get_hostname(self):
         return await self._call("get_hostname", copy.deepcopy(HOSTNAME_RESULT))
@@ -268,6 +283,8 @@ async def test_first_update_bootstraps_all_subsystems_and_returns_schema_keys():
         "gpio",
         "gpio_model",
         "gpio_labels",
+        "switch",
+        "switch_model",
         "info",
         "glinet",
         "unsupported",
@@ -1388,3 +1405,79 @@ async def test_ws_backoff_only_resets_after_stable_connection(monkeypatch):
     with pytest.raises(asyncio.CancelledError):
         await coord._ws_loop()
     assert sleeps == [5, 10, 20, 5, 10]
+
+
+# --- switch (Comet X) and info.health ----------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_switch_and_health_reads_land_in_state():
+    coord = make_coordinator(FakeClient())
+
+    state = await coord._async_update_data()
+
+    assert state["switch_model"] == SWITCH_RESULT["model"]
+    assert "model" not in state["switch"]
+    assert state["switch"]["summary"]["active_id"] == "1.1"
+    assert state["info"]["health"]["cpu"]["percent"] == 30
+
+
+@pytest.mark.asyncio
+async def test_switch_404_and_health_400_mark_unsupported():
+    client = FakeClient()
+    client.fail_always("get_switch", CometApiError("nf", status=404))
+    client.fail_always("get_info_health", CometApiError("bad", status=400))
+    coord = make_coordinator(client)
+
+    state = await coord._async_update_data()
+    assert {"switch", "health"} <= set(state["unsupported"])
+    await coord._async_update_data()
+
+    assert client.calls["get_switch"] == 1
+    assert client.calls["get_info_health"] == 1
+    assert state["switch"] == {} and state["switch_model"] == {}
+
+
+def test_switch_frame_then_delta_replaces_lists_and_keeps_model():
+    coord = make_coordinator(FakeClient())
+    coord._process_ws_message({"event_type": "switch", "event": copy.deepcopy(SWITCH_RESULT)})
+    model = coord._state["switch_model"]
+
+    coord._process_ws_message(
+        {
+            "event_type": "switch",
+            "event": {
+                "summary": {"active_id": "1.2"},
+                "video": {"links": [False, True, False, False]},
+            },
+        }
+    )
+
+    assert coord._state["switch_model"] is model
+    assert coord._state["switch"]["summary"] == {
+        "active_id": "1.2",
+        "active_port": 0,
+        "synced": True,
+    }
+    assert coord._state["switch"]["video"]["links"] == [False, True, False, False]
+    assert coord._state["switch"]["usb_otg"]["links"][0] is True
+
+
+def test_switch_model_frame_replaces_switch_model_identity():
+    coord = make_coordinator(FakeClient())
+    coord._process_ws_message({"event_type": "switch", "event": copy.deepcopy(SWITCH_RESULT)})
+    old = coord._state["switch_model"]
+
+    new_model = {"ports": [{"id": "1.1", "channel": 0, "name": "NAS"}]}
+    coord._process_ws_message({"event_type": "switch", "event": {"model": new_model}})
+
+    assert coord._state["switch_model"] is new_model
+    assert coord._state["switch_model"] is not old
+    assert coord._state["switch"]["summary"]["active_id"] == "1.1"
+
+
+def test_switch_non_dict_model_and_event_ignored():
+    coord = make_coordinator(FakeClient())
+    coord._process_switch_event({"model": [1]})
+    coord._process_switch_event([1])  # type: ignore[arg-type]
+    assert coord._state["switch_model"] == {}

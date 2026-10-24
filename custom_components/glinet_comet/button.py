@@ -21,8 +21,14 @@ from .data import CometConfigEntry
 from .api import CometApiClient, CometError
 from .const import CONF_ENABLE_ATX, DEFAULT_ENABLE_ATX
 from .coordinator import CometDataUpdateCoordinator
-from .entity import CometAtxEntity, CometEntity, CometGpioEntity
+from .entity import (
+    CometAtxEntity,
+    CometEntity,
+    CometGpioEntity,
+    CometSwitchPortEntity,
+)
 from .gpio import async_setup_gpio_entities
+from .switch_ports import async_setup_switch_port_entities
 
 
 async def _press_reboot(client: CometApiClient) -> None:
@@ -82,6 +88,14 @@ BUTTONS: tuple[CometButtonDescription, ...] = (
 PARALLEL_UPDATES = 1
 
 
+# (key suffix, label, icon, switch/atx/click button)
+PORT_ATX_BUTTONS: tuple[tuple[str, str, str, str], ...] = (
+    ("atx_power", "ATX Power", "mdi:power", "power"),
+    ("atx_power_long", "ATX Power (Long Press)", "mdi:power-plug-off", "power_long"),
+    ("atx_reset", "ATX Reset", "mdi:restart", "reset"),
+)
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: CometConfigEntry,
@@ -113,6 +127,19 @@ async def async_setup_entry(
     async_setup_gpio_entities(
         entry, coordinator, async_add_entities, "outputs", _gpio_pulse_factory
     )
+
+    if enable_atx:
+        async_setup_switch_port_entities(
+            entry,
+            coordinator,
+            async_add_entities,
+            lambda port: [
+                CometSwitchPortAtxButton(
+                    coordinator, entry, port["id"], port["channel"], suffix, label, icon, button
+                )
+                for suffix, label, icon, button in PORT_ATX_BUTTONS
+            ],
+        )
 
 
 class _CometButtonMixin:
@@ -178,5 +205,32 @@ class CometGpioPulseButton(CometGpioEntity, ButtonEntity):
         delay = parsers.gpio_pulse_delay(pulse)
         try:
             await self.coordinator.client.gpio_pulse(self._channel, delay)
+        except CometError as err:
+            raise HomeAssistantError(str(err)) from err
+
+
+class CometSwitchPortAtxButton(CometSwitchPortEntity, ButtonEntity):
+    """A per-port ATX button on the multiport switch (Comet X)."""
+
+    def __init__(
+        self,
+        coordinator: CometDataUpdateCoordinator,
+        entry: CometConfigEntry,
+        port_id: str,
+        channel: int,
+        key_suffix: str,
+        label: str,
+        icon: str,
+        button: str,
+    ) -> None:
+        """Initialize the port ATX button."""
+        super().__init__(coordinator, entry, port_id, channel, key_suffix, label)
+        self._attr_icon = icon
+        self._button = button
+
+    async def async_press(self) -> None:
+        """Click the port's ATX button."""
+        try:
+            await self.coordinator.client.switch_atx_click(self._port_id, self._button)
         except CometError as err:
             raise HomeAssistantError(str(err)) from err

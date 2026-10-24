@@ -19,8 +19,14 @@ from . import parsers
 from .data import CometConfigEntry
 from .const import CONF_ENABLE_ATX, DEFAULT_ENABLE_ATX
 from .coordinator import CometDataUpdateCoordinator
-from .entity import CometAtxEntity, CometEntity, CometGpioEntity
+from .entity import (
+    CometAtxEntity,
+    CometEntity,
+    CometGpioEntity,
+    CometSwitchPortEntity,
+)
 from .gpio import async_setup_gpio_entities
+from .switch_ports import async_setup_switch_port_entities
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -88,6 +94,38 @@ BINARY_SENSORS: tuple[CometBinarySensorDescription, ...] = (
 PARALLEL_UPDATES = 0
 
 
+@dataclass(frozen=True)
+class _PortSensorSpec:
+    """One per-port binary sensor on the multiport switch (Comet X)."""
+
+    suffix: str
+    label: str
+    device_class: BinarySensorDeviceClass
+    # ("link", kind) reads switch.<kind>.links[i]; ("led", name) reads atx.leds.<name>[i].
+    source: tuple[str, str]
+
+    @property
+    def led(self) -> bool:
+        """Whether this sensor is an ATX LED (gated on enable_atx)."""
+        return self.source[0] == "led"
+
+
+PORT_BINARY_SENSORS: tuple[_PortSensorSpec, ...] = (
+    _PortSensorSpec(
+        "video", "Video Link", BinarySensorDeviceClass.CONNECTIVITY, ("link", "video")
+    ),
+    _PortSensorSpec(
+        "usb", "USB Link", BinarySensorDeviceClass.CONNECTIVITY, ("link", "usb_otg")
+    ),
+    _PortSensorSpec(
+        "power", "Power LED", BinarySensorDeviceClass.POWER, ("led", "power")
+    ),
+    _PortSensorSpec(
+        "hdd", "HDD Activity", BinarySensorDeviceClass.RUNNING, ("led", "hdd")
+    ),
+)
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: CometConfigEntry,
@@ -115,6 +153,17 @@ async def async_setup_entry(
         "inputs",
         lambda channel, config: CometGpioInputBinarySensor(coordinator, entry, channel),
     )
+
+    def _port_factory(port: dict[str, Any]) -> list[BinarySensorEntity]:
+        return [
+            CometSwitchPortBinarySensor(
+                coordinator, entry, port["id"], port["channel"], desc
+            )
+            for desc in PORT_BINARY_SENSORS
+            if enable_atx or not desc.led
+        ]
+
+    async_setup_switch_port_entities(entry, coordinator, async_add_entities, _port_factory)
 
 
 class _CometBinarySensorMixin:
@@ -175,3 +224,38 @@ class CometGpioInputBinarySensor(CometGpioEntity, BinarySensorEntity):
     def is_on(self) -> bool | None:
         """Return the GPIO input state."""
         return self._channel_on
+
+
+class CometSwitchPortBinarySensor(CometSwitchPortEntity, BinarySensorEntity):
+    """A per-port link/LED binary sensor on the multiport switch (Comet X).
+
+    LED sensors are unavailable while the device reports no LED value for
+    the port (the arrays are empty without an ATX board).
+    """
+
+    def __init__(
+        self,
+        coordinator: CometDataUpdateCoordinator,
+        entry: CometConfigEntry,
+        port_id: str,
+        channel: int,
+        spec: _PortSensorSpec,
+    ) -> None:
+        """Initialize the port binary sensor."""
+        super().__init__(coordinator, entry, port_id, channel, spec.suffix, spec.label)
+        self._spec = spec
+        self._attr_device_class = spec.device_class
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return the link/LED state."""
+        data = self.coordinator.data or {}
+        kind, name = self._spec.source
+        if kind == "link":
+            return parsers.switch_link(data, name, self._channel)
+        return parsers.switch_atx_led(data, name, self._channel)
+
+    @property
+    def available(self) -> bool:
+        """LED sensors additionally need a reported LED value."""
+        return super().available and (not self._spec.led or self.is_on is not None)

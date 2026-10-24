@@ -47,19 +47,19 @@ DEFAULT_PASS_FILE = os.path.join(HERE, "..", ".comet_pass")
 
 # GET routes to dump: (label, path).
 READS = [
-    # "health" is not a valid field on this fork (confirmed 400 in a prior
-    # run); the WS `info` event stream showed the valid sections are
-    # system/auth/meta/extras.
+    # Valid `info` sections on this fork: system/auth/meta/extras, plus
+    # `health` (cpu/mem/temp/net) which 400'd on fw V1.9.1 but returns 200
+    # on V1.10.1 for both RM1PE and RM4PE. `hw` and `fan` still 400.
     ("info", "/api/info?fields=system,auth,meta,extras"),
-    # Upstream kvmd's legacy field, carrying hw.health.{temp,cpu,mem,net} +
-    # hw.platform on stock kvmd/PiKVM. Unconfirmed on this fork — if this
-    # 400s, that is itself the finding (no hw/health metrics available).
+    ("info_health", "/api/info?fields=health"),
     ("info_hw", "/api/info?fields=hw"),
     ("atx", "/api/atx"),
     ("hid", "/api/hid"),
     ("msd", "/api/msd"),
     ("streamer", "/api/streamer"),
     ("gpio", "/api/gpio"),
+    # Multi-port KVM switch (Comet X / RM4PE): 200 there, 404 on RM1PE.
+    ("switch", "/api/switch"),
     ("system_hostname", "/api/system/get_hostname"),
     ("system_network_config", "/api/system/get_network_config"),
     ("system_param", "/api/system/get_param"),
@@ -87,8 +87,9 @@ PROBE_PATHS = [
 
 # Routes that execute a destructive action on GET (no method gating) —
 # confirmed for /api/upgrade/reboot by a real, unintended reboot from a
-# prior GET probe; the other three are treated the same way out of caution
-# since glkvm registers them the same way. Every GET helper in this file
+# prior GET probe; the others are treated the same way out of caution
+# (glkvm registers the upgrade/msd ones the same way; switch/reset reboots
+# the switch MCU per upstream kvmd). Every GET helper in this file
 # checks against this list and refuses to request any of them, regardless
 # of --probe-writes or what's in READS/PROBE_PATHS. Do not remove a path
 # from this list without confirming (via source, not by testing live) that
@@ -98,6 +99,7 @@ NEVER_TOUCH = (
     "/api/upgrade/reset_default",
     "/api/upgrade/start",
     "/api/msd/partition_format",
+    "/api/switch/reset",
 )
 
 

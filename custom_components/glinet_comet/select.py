@@ -2,18 +2,20 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from homeassistant.components.select import SelectEntity
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import parsers
-from .data import CometConfigEntry
-from typing import Any
-
 from .api import CometError
 from .coordinator import CometDataUpdateCoordinator
+from .data import CometConfigEntry
 from .entity import CometEntity
+from .switch_ports import async_setup_switch_port_entities
 
 # Sentinel option meaning "no image mounted". Never sent to the device --
 # async_select_option maps it to image="" before calling set_msd_params.
@@ -29,7 +31,21 @@ async def async_setup_entry(
 ) -> None:
     """Set up GL.iNet Comet select entities."""
     coordinator: CometDataUpdateCoordinator = entry.runtime_data.coordinator
-    async_add_entities([CometMsdImageSelect(coordinator, entry)])
+    entities: list[SelectEntity] = [CometMsdImageSelect(coordinator, entry)]
+    if parsers.mouse_outputs_available(coordinator.data or {}):
+        entities.append(CometMouseOutputSelect(coordinator, entry))
+    async_add_entities(entities)
+
+    created = False
+
+    def _port_factory(port: dict[str, Any]) -> list[SelectEntity]:
+        nonlocal created
+        if created:
+            return []
+        created = True
+        return [CometActivePortSelect(coordinator, entry)]
+
+    async_setup_switch_port_entities(entry, coordinator, async_add_entities, _port_factory)
 
 
 class CometMsdImageSelect(CometEntity, SelectEntity):
@@ -93,3 +109,83 @@ class CometMsdImageSelect(CometEntity, SelectEntity):
             if was_connected:
                 drive["connected"] = False
             self.coordinator.push_partial("msd", {"drive": drive})
+
+
+
+class CometActivePortSelect(CometEntity, SelectEntity):
+    """Select the active target port on the multiport switch (Comet X).
+
+    No optimistic update -- the device pushes ``switch`` WebSocket frames.
+    """
+
+    _attr_translation_key = "active_port"
+
+    def __init__(
+        self,
+        coordinator: CometDataUpdateCoordinator,
+        entry: CometConfigEntry,
+    ) -> None:
+        """Initialize the active port select."""
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_switch_active_port"
+
+    @property
+    def options(self) -> list[str]:
+        """Return the live port display names."""
+        return list(parsers.switch_port_options(self.coordinator.data or {}))
+
+    @property
+    def current_option(self) -> str | None:
+        """Return the display name of the active port (``None`` if none/unknown)."""
+        data = self.coordinator.data or {}
+        active = parsers.switch_active_port_id(data)
+        for name, port_id in parsers.switch_port_options(data).items():
+            if port_id == active:
+                return name
+        return None
+
+    async def async_select_option(self, option: str) -> None:
+        """Switch the active port."""
+        port_id = parsers.switch_port_options(self.coordinator.data or {}).get(option)
+        if port_id is None:
+            raise HomeAssistantError(f"Unknown port: {option}")
+        try:
+            await self.coordinator.client.switch_set_active(port_id)
+        except CometError as err:
+            raise HomeAssistantError(str(err)) from err
+
+
+class CometMouseOutputSelect(CometEntity, SelectEntity):
+    """Select the HID mouse output mode (e.g. usb, usb_rel).
+
+    No optimistic update -- the device pushes ``hid`` WebSocket frames.
+    """
+
+    _attr_translation_key = "mouse_output"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(
+        self,
+        coordinator: CometDataUpdateCoordinator,
+        entry: CometConfigEntry,
+    ) -> None:
+        """Initialize the mouse output select."""
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_hid_mouse_output"
+
+    @property
+    def options(self) -> list[str]:
+        """Return the available mouse outputs."""
+        return parsers.mouse_outputs_available(self.coordinator.data or {})
+
+    @property
+    def current_option(self) -> str | None:
+        """Return the active mouse output."""
+        return parsers.mouse_output_active(self.coordinator.data or {})
+
+    async def async_select_option(self, option: str) -> None:
+        """Set the mouse output."""
+        try:
+            await self.coordinator.client.set_hid_mouse_output(option)
+        except CometError as err:
+            raise HomeAssistantError(str(err)) from err

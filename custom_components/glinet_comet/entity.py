@@ -132,3 +132,52 @@ class CometGpioEntity(CometEntity):
     def available(self) -> bool:
         """Return True only if the coordinator is available and the channel is online."""
         return super().available and self._channel_state.get("online") is True
+
+
+class CometSwitchPortEntity(CometEntity):
+    """Base entity for one port of the multiport switch (Comet X).
+
+    Unavailable whenever the coordinator is unavailable OR the port id is
+    no longer in ``switch_model``. No optimistic update -- the device pushes
+    ``switch`` WebSocket frames.
+    """
+
+    def __init__(
+        self,
+        coordinator: CometDataUpdateCoordinator,
+        entry: ConfigEntry,
+        port_id: str,
+        channel: int,
+        key_suffix: str,
+        label: str,
+    ) -> None:
+        """Initialize the switch port entity."""
+        super().__init__(coordinator, entry)
+        self._port_id = port_id
+        self._channel = channel
+        self._label = label
+        self._attr_unique_id = f"{entry.entry_id}_switch_port_{channel}_{key_suffix}"
+
+    @property
+    def _port(self) -> dict[str, Any] | None:
+        """Return the live port dict from ``switch_model`` (``None`` on miss)."""
+        return parsers.switch_port(self.coordinator.data or {}, self._port_id)
+
+    @property
+    def name(self) -> str:
+        """Return ``"<port name> <label>"``, read live so a rename needs no reload.
+
+        A plain ``@property`` (no ``_attr_name``), like ``CometGpioEntity.name``.
+        """
+        port = self._port
+        base = (
+            parsers.switch_port_name(port)
+            if port is not None
+            else f"Port {self._channel + 1}"
+        )
+        return f"{base} {self._label}"
+
+    @property
+    def available(self) -> bool:
+        """Return True only if the coordinator is available and the port still exists."""
+        return super().available and self._port is not None

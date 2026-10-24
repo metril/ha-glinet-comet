@@ -7,6 +7,8 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from types import SimpleNamespace
+
 import pytest
 from unittest.mock import Mock
 
@@ -160,3 +162,128 @@ def test_options_include_none_sentinel_and_storage_images():
 
     assert entity.options == [MSD_IMAGE_NONE, "a.iso", "b.iso"]
     assert entity.current_option == MSD_IMAGE_NONE
+
+
+# --- Comet X active port + mouse output selects ---
+
+import copy
+import json
+
+from custom_components.glinet_comet.const import DOMAIN
+from custom_components.glinet_comet.select import (
+    CometActivePortSelect,
+    CometMouseOutputSelect,
+    async_setup_entry,
+)
+
+_FX = os.path.join(os.path.dirname(__file__), "fixtures")
+
+
+def _fx(name: str) -> dict:
+    with open(os.path.join(_FX, name)) as f:
+        return json.load(f)
+
+
+class _Entry(FakeEntry):
+    def __init__(self) -> None:
+        super().__init__()
+        self.unload_callbacks: list = []
+
+    def async_on_unload(self, fn) -> None:
+        self.unload_callbacks.append(fn)
+
+
+class _Hass(FakeHass):
+    def __init__(self) -> None:
+        super().__init__()
+        self.data: dict = {}
+
+
+class _PortClient:
+    def __init__(self) -> None:
+        self.calls: list[tuple] = []
+        self.err: Exception | None = None
+
+    async def switch_set_active(self, port_id: str) -> None:
+        if self.err:
+            raise self.err
+        self.calls.append(("active", port_id))
+
+    async def set_hid_mouse_output(self, output: str) -> None:
+        self.calls.append(("mouse", output))
+
+
+def _setup(data: dict, client=None):
+    import asyncio
+
+    coord = CometDataUpdateCoordinator(_Hass(), _Entry(), client or _PortClient())
+    coord.data = data
+    hass = _Hass()
+    coord.entry.runtime_data = SimpleNamespace(coordinator=coord, client=None)
+    added: list = []
+    asyncio.run(async_setup_entry(hass, coord.entry, added.extend))
+    return added, coord
+
+
+def test_rm4pe_creates_both_selects():
+    added, _ = _setup(_fx("state_live_rm4pe.json"))
+    assert len([e for e in added if isinstance(e, CometActivePortSelect)]) == 1
+    assert len([e for e in added if isinstance(e, CometMouseOutputSelect)]) == 1
+
+
+def test_poe_without_switch_has_mouse_select_only():
+    data = _fx("state_live.json")
+    data["unsupported"] = ["switch"]
+    added, _ = _setup(data)
+    assert not [e for e in added if isinstance(e, CometActivePortSelect)]
+    assert len([e for e in added if isinstance(e, CometMouseOutputSelect)]) == 1
+
+
+def test_mouse_select_skipped_when_available_empty():
+    data = _fx("state_live_rm4pe.json")
+    data["hid"]["mouse"]["outputs"]["available"] = []
+    added, _ = _setup(data)
+    assert not [e for e in added if isinstance(e, CometMouseOutputSelect)]
+
+
+def test_late_switch_model_adds_active_select_once():
+    data = _fx("state_live.json")
+    added, coord = _setup(data)
+    rm4 = _fx("state_live_rm4pe.json")
+    coord.data = {**data, "switch": rm4["switch"], "switch_model": copy.deepcopy(rm4["switch_model"])}
+    coord.async_update_listeners()
+    coord.data = {**coord.data, "switch_model": copy.deepcopy(rm4["switch_model"])}
+    coord.async_update_listeners()
+    assert len([e for e in added if isinstance(e, CometActivePortSelect)]) == 1
+
+
+@pytest.mark.asyncio
+async def test_active_port_select_options_current_and_write():
+    import asyncio
+
+    client = _PortClient()
+    data = _fx("state_live_rm4pe.json")
+    coord = CometDataUpdateCoordinator(_Hass(), _Entry(), client)
+    coord.data = data
+    ent = CometActivePortSelect(coord, coord.entry)
+    assert ent.options == ["Port 1", "Port 2", "Port 3", "Port 4"]
+    assert ent.current_option == "Port 2"
+    await ent.async_select_option("Port 3")
+    assert client.calls == [("active", "1.3")]
+    client.err = CometApiError("x", status=500)
+    with pytest.raises(HomeAssistantError):
+        await ent.async_select_option("Port 1")
+    with pytest.raises(HomeAssistantError):
+        await ent.async_select_option("Nope")
+
+
+@pytest.mark.asyncio
+async def test_mouse_select_options_current_and_write():
+    client = _PortClient()
+    coord = CometDataUpdateCoordinator(_Hass(), _Entry(), client)
+    coord.data = _fx("state_live_rm4pe.json")
+    ent = CometMouseOutputSelect(coord, coord.entry)
+    assert ent.options == ["usb", "usb_rel", "usb_hybrid", "usb_touch"]
+    assert ent.current_option == "usb"
+    await ent.async_select_option("usb_rel")
+    assert client.calls == [("mouse", "usb_rel")]

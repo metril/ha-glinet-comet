@@ -12,7 +12,11 @@ from a WS ``gpio`` frame and ignores any ``model`` it carries, so this
 slow-tier poll is the only path by which ``gpio_model`` is ever
 reassigned; ``_process_gpio_full`` re-derives
 ``gpio``/``gpio_model``/``gpio_labels`` from scratch on every successful
-read.
+read. ``switch`` (Comet X multiport switch; 404s on single-port models, so it
+lands in ``unsupported``) is polled every cycle for the same reason and also
+merged from WS ``switch`` frames; its ``model`` is stored separately as
+``switch_model`` and replaced wholesale. ``info.health`` is an optional read
+too.
 
 Failure tiers: systemic failures (auth/rate-limit/connection) always fail
 the whole cycle, regardless of which read hit them. A per-subsystem
@@ -132,6 +136,8 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "gpio": {"inputs": {}, "outputs": {}},
             "gpio_model": {"inputs": {}, "outputs": {}},
             "gpio_labels": {},
+            "switch": {},
+            "switch_model": {},
             "info": {},
             "glinet": {},
             "unsupported": [],
@@ -143,6 +149,7 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "msd": self._process_msd_event,
             "streamer": self._process_streamer_event,
             "gpio": self._process_gpio_event,
+            "switch": self._process_switch_event,
             "info": self._process_info_event,
         }
 
@@ -204,6 +211,8 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 optional[key] = factory()
 
         add_optional("hw", lambda: self.client.get_info("hw"))
+        add_optional("health", lambda: self.client.get_info("health"))
+        add_optional("switch", lambda: self.client.get_switch())
         add_optional("hostname", lambda: self.client.get_hostname())
         add_optional("network", lambda: self.client.get_network_config())
         add_optional("upgrade_version", lambda: self.client.get_upgrade_version())
@@ -309,7 +318,7 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     def _apply_read(self, key: str, result: dict[str, Any]) -> None:
         """Route one successful slow-tier read into coordinator state."""
-        if key in ("info_system", "hw"):
+        if key in ("info_system", "hw", "health"):
             self._process_info_event(result)
         elif key == "atx":
             self._process_atx_event(result)
@@ -321,6 +330,8 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._process_streamer_event(result)
         elif key == "gpio":
             self._process_gpio_full(result)
+        elif key == "switch":
+            self._process_switch_event(result)
         elif key in ("hostname", "network", "upgrade_version", "upgrade_compare"):
             self._state["glinet"][key] = result
 
@@ -480,8 +491,8 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return
         handler = self._ws_handlers.get(event_type)
         if handler is None or not isinstance(event, dict):
-            # Includes hid_keymaps/ocr/recorder/fingerbot/serial/rndis/switch/
-            # turn/ap/repeater/modem and any other frame we don't model yet.
+            # Includes hid_keymaps/ocr/recorder/fingerbot/serial/rndis/turn/
+            # ap/repeater/modem and any other frame we don't model yet.
             return
         handler(event)
         self._push_state()
@@ -610,6 +621,21 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 for ch in channel_names:
                     labels[ch] = label_text
         self._state["gpio_labels"] = labels
+
+    def _process_switch_event(self, event: dict[str, Any]) -> None:
+        """Merge a ``switch`` event/read; ``model`` replaces ``switch_model`` wholesale.
+
+        WS deltas are partial (``summary``, ``video``, ...), so everything but
+        ``model`` deep-merges into ``switch`` (lists are replaced by
+        ``_deep_merge``, which is right for the per-port arrays).
+        """
+        if not isinstance(event, dict):
+            return
+        model = event.get("model")
+        if isinstance(model, dict):
+            self._state["switch_model"] = model
+        rest = {k: v for k, v in event.items() if k != "model"}
+        _deep_merge(self._state["switch"], rest)
 
     def _process_info_event(self, event: dict[str, Any]) -> None:
         """Merge one or more ``info`` sections (``{"system": {...}}``, ...)."""

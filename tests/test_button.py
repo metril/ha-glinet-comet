@@ -294,12 +294,90 @@ async def test_gpio_listener_removed_on_unload_stops_further_adds():
     invoking the stored remover (as HA does on unload) must stop it from
     reacting to further coordinator updates."""
     coord, add = await _setup_recording({})
-    assert len(coord.entry.unload_callbacks) == 1
-    remove = coord.entry.unload_callbacks[0]
-    remove()
+    assert len(coord.entry.unload_callbacks) >= 1
+    for remove in coord.entry.unload_callbacks:
+        remove()
 
     coord.data = _load_fixture("state_gpio.json")  # a brand-new gpio_model
     coord.async_update_listeners()
 
     pulse_buttons = [e for e in add.added if isinstance(e, CometGpioPulseButton)]
     assert pulse_buttons == []  # listener was removed -- nothing added
+
+
+# --- Comet X switch port ATX buttons ---
+
+
+class PortClient:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+        self.err: Exception | None = None
+
+    async def switch_atx_click(self, port_id: str, button: str) -> None:
+        if self.err:
+            raise self.err
+        self.calls.append((port_id, button))
+
+
+async def _setup_ports(data: dict, options: dict | None = None, client=None):
+    from custom_components.glinet_comet.button import CometSwitchPortAtxButton
+
+    coord = CometDataUpdateCoordinator(FakeHass(), FakeEntry(), client or PortClient())
+    coord.entry.options = options or {}
+    coord.data = data
+    hass = FakeHass()
+    coord.entry.runtime_data = SimpleNamespace(coordinator=coord, client=None)
+    added: list = []
+    await async_setup_entry(hass, coord.entry, added.extend)
+    return [e for e in added if isinstance(e, CometSwitchPortAtxButton)], coord
+
+
+@pytest.mark.asyncio
+async def test_rm4pe_atx_on_creates_12_port_buttons_and_press_clicks():
+    client = PortClient()
+    buttons, _ = await _setup_ports(
+        _load_fixture("state_live_rm4pe.json"), {"enable_atx": True}, client
+    )
+    assert len(buttons) == 12
+    b = next(e for e in buttons if e._attr_unique_id.endswith("switch_port_1_atx_reset"))
+    assert b.name == "Port 2 ATX Reset"
+    await b.async_press()
+    assert client.calls == [("1.2", "reset")]
+
+
+@pytest.mark.asyncio
+async def test_port_buttons_none_when_atx_off_or_switch_unsupported():
+    buttons, _ = await _setup_ports(_load_fixture("state_live_rm4pe.json"), {"enable_atx": False})
+    assert buttons == []
+    data = _load_fixture("state_live.json")
+    data["unsupported"] = ["switch"]
+    buttons, _ = await _setup_ports(data, {"enable_atx": True})
+    assert buttons == []
+
+
+@pytest.mark.asyncio
+async def test_port_button_error_raises_home_assistant_error():
+    client = PortClient()
+    buttons, _ = await _setup_ports(
+        _load_fixture("state_live_rm4pe.json"), {"enable_atx": True}, client
+    )
+    client.err = CometApiError("boom", status=500)
+    with pytest.raises(HomeAssistantError):
+        await buttons[0].async_press()
+
+
+@pytest.mark.asyncio
+async def test_late_switch_model_adds_port_buttons_once():
+    data = _load_fixture("state_live.json")
+    buttons, coord = await _setup_ports(data, {"enable_atx": True})
+    assert buttons == []
+    rm4 = _load_fixture("state_live_rm4pe.json")
+    added: list = []
+    # re-run setup against same coordinator to capture additions after late model
+    hass = FakeHass()
+    coord.entry.runtime_data = SimpleNamespace(coordinator=coord, client=None)
+    await async_setup_entry(hass, coord.entry, added.extend)
+    coord.data = {**data, "switch": rm4["switch"], "switch_model": rm4["switch_model"]}
+    coord.async_update_listeners()
+    coord.async_update_listeners()
+    assert len([e for e in added if type(e).__name__ == "CometSwitchPortAtxButton"]) == 12

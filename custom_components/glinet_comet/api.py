@@ -435,6 +435,10 @@ class CometApiClient:
         """Fetch GPIO state and model."""
         return await self._request("GET", "/api/gpio")
 
+    async def get_switch(self) -> dict[str, Any]:
+        """Fetch the multiport switch state and model (Comet X)."""
+        return await self._request("GET", "/api/switch")
+
     async def get_hostname(self) -> dict[str, Any]:
         """Fetch the device hostname."""
         return await self._request("GET", "/api/system/get_hostname")
@@ -461,12 +465,33 @@ class CometApiClient:
         """Control ATX power (on, off, off_hard, reset_hard)."""
         await self._request("POST", f"/api/atx/power?{urlencode({'action': action})}")
 
+    # --- Switch actions ---
+
+    async def switch_set_active(self, port_id: str) -> None:
+        """Select the active switch port (e.g. ``"1.2"``)."""
+        await self._request(
+            "POST", f"/api/switch/set_active?{urlencode({'port': port_id})}"
+        )
+
+    async def switch_atx_click(self, port_id: str, button: str) -> None:
+        """Simulate an ATX button press on a switch port (power, power_long, reset)."""
+        await self._request(
+            "POST",
+            f"/api/switch/atx/click?{urlencode({'port': port_id, 'button': button})}",
+        )
+
     # --- HID actions ---
 
     async def set_hid_jiggler(self, enabled: bool) -> None:
         """Enable or disable the HID jiggler."""
         value = "1" if enabled else "0"
         await self._request("POST", f"/api/hid/set_params?jiggler={value}")
+
+    async def set_hid_mouse_output(self, output: str) -> None:
+        """Select the HID mouse output (e.g. ``usb``, ``usb_rel``)."""
+        await self._request(
+            "POST", f"/api/hid/set_params?{urlencode({'mouse_output': output})}"
+        )
 
     async def set_hid_connected(self, connected: bool) -> None:
         """Connect or disconnect the HID device."""

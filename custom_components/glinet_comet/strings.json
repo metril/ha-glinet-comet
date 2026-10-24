@@ -160,6 +160,21 @@
       },
       "captured_fps": {
         "name": "Captured FPS"
+      },
+      "cpu_percent": {
+        "name": "CPU Usage"
+      },
+      "mem_percent": {
+        "name": "Memory Usage"
+      },
+      "cpu_temp": {
+        "name": "CPU Temperature"
+      },
+      "net_rx_rate": {
+        "name": "Network RX Rate"
+      },
+      "net_tx_rate": {
+        "name": "Network TX Rate"
       }
     },
     "button": {
@@ -203,6 +218,12 @@
     "select": {
       "msd_image": {
         "name": "MSD Image"
+      },
+      "active_port": {
+        "name": "Active Port"
+      },
+      "mouse_output": {
+        "name": "Mouse Output"
       }
     }
   },

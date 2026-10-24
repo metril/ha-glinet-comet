@@ -8,5 +8,6 @@ docs/superpowers/
 .superpowers/
 # Local admin credentials for discovery tooling — NEVER commit
 .comet_pass
+.cometx_pass
 # Local API dumps may contain identifying data (serial, token, IPs) — never commit
 comet_api_dump.json
