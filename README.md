@@ -13,6 +13,12 @@ State is pushed from the device over a WebSocket (local push) with a slow
 HTTP-poll tier for the handful of reads (hostname, network, firmware) the
 socket doesn't carry.
 
+## What's new in 0.5.0
+
+Comet PoE video wake: the Screen camera now auto-wakes the video capture
+(15 s) when a snapshot is requested and the HDMI source is offline, via a
+decode-free WebRTC viewer session (adds the `aioice` and `pyOpenSSL` requirements).
+
 ## What's new in 0.4.0
 
 Comet X (GL-RM4PE) support: Active Port select, per-port video/USB link and
@@ -148,7 +154,7 @@ valid for a ±30 second window.
 | WebSocket reconnect delay (seconds) | 5 | Delay before reconnecting a dropped WebSocket. |
 | HTTP request timeout (seconds) | 10 | |
 | Enable ATX power control | On | Creates the ATX entities. Requires GL.iNet's ATX board — the entities exist but stay unavailable without one. |
-| Keep video capture active | Off | Keeps the Comet's video pipeline running so the HDMI Signal, Resolution, and FPS sensors and the Screen camera snapshot stay live, at the cost of Comet CPU. Off (default): those only update while someone is viewing the Comet's own web UI. **Known limitation:** on the Comet PoE (GL-RM1PE, fw V1.10.1) this is not enough: the device keeps its streamer process alive but reports no HDMI signal and the snapshot returns 503 until a real web-UI (WebRTC) viewer has been open; the capture drops again ~40 s after the viewer closes. The Comet X (GL-RM4PE) does not have this problem. |
+| Keep video capture active | Off | Keeps the Comet's video pipeline running so the HDMI Signal, Resolution, and FPS sensors and the Screen camera snapshot stay live, at the cost of Comet CPU. Off (default): those only update while someone is viewing the Comet's own web UI. The Screen camera auto-wakes video for 15 s on request; on the Comet PoE, this option additionally holds a decode-free WebRTC viewer session (ICE + DTLS handshake via aioice/pyOpenSSL, SRTP dropped unread; ~1.5 Mbps, ~3% of a core, wake under 1 s, capture drops ~3 s after close) because a `stream=1` socket alone never locks its HDMI capture. The Comet X needs none of this. |
 
 ## Notes / gotchas
 

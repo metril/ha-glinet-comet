@@ -56,6 +56,10 @@ class CometApiError(CometError):
         super().__init__(message)
 
 
+class CometUnsupportedError(CometApiError):
+    """Raised when an optional endpoint (e.g. ``/lws/ws``) doesn't exist."""
+
+
 class CometRateLimitError(CometError):
     """Raised when the Comet's login endpoint is rate-limiting us."""
 
@@ -575,22 +579,32 @@ class CometApiClient:
         """Open the WebSocket event stream, re-login-and-retry once on 401/403.
 
         ``stream=True`` (default) requests ``stream=1``: kvmd only runs video
-        capture while a ``stream=1`` WS client is connected — otherwise
+        capture while a ``stream=1`` WS client is connected -- otherwise
         ``streamer.streamer`` stays null and snapshots 503. Pass
         ``stream=False`` for a state-only connection (``stream=0``) that
         doesn't need to keep the video pipeline active.
         """
-        path = "/api/ws"
-        stream_flag = "1" if stream else "0"
+        flag = "1" if stream else "0"
+        return await self._ws_connect("/api/ws", f"stream={flag}&", 30)
+
+    async def connect_lws(self) -> aiohttp.ClientWebSocketResponse:
+        """Open the WebRTC signalling socket (``/lws/ws``).
+
+        Raises ``CometUnsupportedError`` on 404/502 (no lws backend).
+        App-level pings are used, so aiohttp's heartbeat is disabled.
+        """
+        return await self._ws_connect("/lws/ws", "", None)
+
+    async def _ws_connect(
+        self, path: str, query: str, heartbeat: float | None
+    ) -> aiohttp.ClientWebSocketResponse:
+        """Connect a WebSocket, re-login-and-retry once on 401/403."""
         for attempt in range(2):
             token = await self._get_token()
-            url = (
-                f"wss://{self._host}{path}"
-                f"?stream={stream_flag}&auth_token={quote(token, safe='')}"
-            )
+            url = f"wss://{self._host}{path}?{query}auth_token={quote(token, safe='')}"
             try:
                 return await self._session.ws_connect(
-                    url, ssl=self._ssl, heartbeat=30
+                    url, ssl=self._ssl, heartbeat=heartbeat
                 )
             except aiohttp.WSServerHandshakeError as err:
                 # `from None`: err (and its request_info.real_url) embeds the
@@ -602,6 +616,11 @@ class CometApiClient:
                         await self._reauth(token)
                         continue
                     raise CometAuthError("WebSocket authentication failed") from None
+                if err.status in (404, 502):
+                    raise CometUnsupportedError(
+                        f"WebSocket endpoint {path} unsupported: HTTP {err.status}",
+                        status=err.status,
+                    ) from None
                 raise CometConnectionError(
                     f"WebSocket handshake failed: HTTP {err.status}"
                 ) from None

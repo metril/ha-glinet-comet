@@ -20,11 +20,23 @@ class FakeClient:
     def __init__(self, result=JPEG, exc=None) -> None:
         self.result = result
         self.exc = exc
+        self.calls = 0
 
     async def get_snapshot(self):
+        self.calls += 1
         if self.exc:
             raise self.exc
         return self.result
+
+
+class FakeVideo:
+    def __init__(self, ok=False) -> None:
+        self.ok = ok
+        self.wakes = 0
+
+    async def wake(self):
+        self.wakes += 1
+        return self.ok
 
 
 class FakeEntry:
@@ -42,6 +54,7 @@ class FakeHass:
 def make(client):
     coord = CometDataUpdateCoordinator(FakeHass(), FakeEntry(), client)
     coord.data = {}
+    coord.video = FakeVideo()
     return coord, CometScreenCamera(coord, coord.entry)
 
 
@@ -78,3 +91,41 @@ def test_availability_follows_coordinator():
     assert cam.available is False
     coord.data = {"ws_connected": True}
     assert cam.available is True
+
+
+ONLINE = {"streamer": {"streamer": {"source": {"online": True}}}}
+
+
+@pytest.mark.asyncio
+async def test_online_failing_snapshot_does_not_wake():
+    coord, cam = make(FakeClient(exc=CometApiError("503", status=503)))
+    coord.data = ONLINE
+    assert await cam.async_camera_image() is None
+    assert coord.video.wakes == 0
+
+
+@pytest.mark.asyncio
+async def test_offline_503_wakes_and_retries_once():
+    client = FakeClient(exc=CometApiError("503", status=503))
+    coord, cam = make(client)
+    coord.video = FakeVideo(ok=True)
+
+    async def snap():
+        client.calls += 1
+        if client.calls == 1:
+            raise CometApiError("503", status=503)
+        return JPEG
+
+    client.get_snapshot = snap
+    assert await cam.async_camera_image() == JPEG
+    assert coord.video.wakes == 1
+    assert client.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_wake_false_returns_none():
+    client = FakeClient(result=None)
+    coord, cam = make(client)
+    assert await cam.async_camera_image() is None
+    assert coord.video.wakes == 1
+    assert client.calls == 1

@@ -60,6 +60,7 @@ from .api import (
     CometRateLimitError,
 )
 from . import parsers
+from .video_session import CometVideoManager
 from .const import (
     CONF_KEEP_VIDEO_ACTIVE,
     CONF_SCAN_INTERVAL,
@@ -140,6 +141,7 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._last_sw_version: str | None = None
         self._ws_failures = 0
         self._ws_connected_at: float | None = None
+        self.video = CometVideoManager(hass, self)
         self._state: dict[str, Any] = {
             "atx": {},
             "hid": {},
@@ -383,6 +385,7 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await task
+        await self.video.stop()
         if self._ws is not None:
             ws, self._ws = self._ws, None
             if not ws.closed:
@@ -462,6 +465,8 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._ws_has_connected_once = True
         self._ws_connected_at = monotonic()
         self._set_ws_connected(True)
+        if self._keep_video_active:
+            self.video.async_on_ws_connected()
         if reconnect:
             # Static reads may have changed while we were away (reboot/upgrade).
             for key in ("info_system", "upgrade_version", "hostname"):
@@ -553,7 +558,9 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     def _process_streamer_event(self, event: dict[str, Any]) -> bool:
         """Merge a streamer GET result or WS ``streamer`` event; return changed."""
-        return _deep_merge(self._state["streamer"], event)
+        changed = _deep_merge(self._state["streamer"], event)
+        self.video.notify_streamer(self._state)
+        return changed
 
     def _process_msd_event(self, event: dict[str, Any]) -> bool:
         """Merge an MSD GET result or WS ``msd`` event.

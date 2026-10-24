@@ -19,6 +19,7 @@ from custom_components.glinet_comet.api import (
     CometApiError,
     CometAuthError,
     CometConnectionError,
+    CometUnsupportedError,
     CometRateLimitError,
 )
 
@@ -612,6 +613,49 @@ async def test_connect_ws_non_auth_handshake_error_does_not_leak_token():
         traceback.format_exception(type(exc), exc, exc.__traceback__)
     )
     assert token not in full_traceback
+
+
+@pytest.mark.asyncio
+async def test_connect_lws_reauths_once_on_401():
+    fake_ws = object()
+    session = _FakeSession([_login_ok("TOK1"), _login_ok("TOK2")])
+    session.queue_ws(_ws_handshake_error("wss://x/lws/ws", 401))
+    session.queue_ws(fake_ws)
+    client = _client(session)
+
+    assert await client.connect_lws() is fake_ws
+    assert session.ws_calls[0][0] == "wss://10.0.0.5/lws/ws?auth_token=TOK1"
+    assert session.ws_calls[1][0].endswith("auth_token=TOK2")
+    assert session.ws_calls[0][1]["heartbeat"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [404, 502])
+async def test_connect_lws_unsupported_without_token_leak(status):
+    token = "SUPER-SECRET-LWS-TOKEN"  # noqa: S105
+    url = f"wss://10.0.0.5/lws/ws?auth_token={token}"
+    session = _FakeSession([_login_ok(token)])
+    session.queue_ws(_ws_handshake_error(url, status))
+    client = _client(session)
+
+    with pytest.raises(CometUnsupportedError) as exc_info:
+        await client.connect_lws()
+
+    exc = exc_info.value
+    assert exc.status == status
+    assert exc.__cause__ is None
+    assert token not in str(exc)
+    assert token not in "".join(
+        traceback.format_exception(type(exc), exc, exc.__traceback__)
+    )
+
+
+@pytest.mark.asyncio
+async def test_connect_lws_other_status_is_connection_error():
+    session = _FakeSession([_login_ok()])
+    session.queue_ws(_ws_handshake_error("wss://x/lws/ws", 500))
+    with pytest.raises(CometConnectionError):
+        await _client(session).connect_lws()
 
 
 # --- test_connection ---

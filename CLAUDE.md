@@ -85,14 +85,32 @@ which runs `glkvm` — GL.iNet's fork of PiKVM's `kvmd`.
   default (video off; `keep_video_active` option turns on `stream=1`), since
   kvmd only keeps its video pipeline running while a `stream=1` client is
   connected. HDMI/resolution/fps sensors and camera snapshot need it on.
-  **Verified 2026-10-24:** sufficient on the Comet X (bare `stream=1` socket
-  → pipeline up in ~2s, snapshot 200, idles ~10s after close). **Not
-  sufficient on the Comet PoE** (fw V1.10.1): streamer stays non-null but
-  `hdmi.signal`/`source.online` are false and snapshot 503s until a real
-  web-UI WebRTC viewer (`pion/ws`) has been open; drops ~40s after it
-  closes. Tested and ruled out as kicks: `/api/media/ws` + h264 `start`,
-  `pion/ws` config without SDP, `POST streamer/set_params?gl_webrtc=true`.
-  Documented as a README limitation; a WebRTC client in HA is out of scope.
+  **Verified 2026-10-24:** `stream=1` alone suffices on the Comet X
+  (pipeline up in ~2s, idles ~10s after close) but **not on the Comet PoE**
+  (fw V1.10.1): `hdmi.signal`/`source.online` stay false and snapshots 503
+  until a real WebRTC viewer is connected. Mechanism (v0.5.0,
+  `video_session.py`): ICE + DTLS handshake via `aioice`/pyOpenSSL (SRTP
+  is dropped unread, nothing decoded; ~1.5 Mbps, ~3% of a core, wake <1s;
+  aiortc rejected because HA pins `av==19`), signalled over
+  `wss://<host>/lws/ws?auth_token=` (`connect_lws()`, heartbeat off). Protocol:
+  send `{"type":"create","orientation":0}` → server `{"type":"id","id":sid}`
+  → send `offer` (plain SDP, recvonly H264 pt 102, candidates inline) + one
+  `ice` per candidate (`candidate:` prefix, sdpMid "0", mline 0) → server
+  `answer`/`ice`; app-level `{"event_type":"ping","event":{}}` every 2s
+  (`pong` replies). **Every message after `id` must carry `id`.** After the
+  answer (+0.5s) `add_remote_candidate(None)`, ICE connect, DTLS (accept if
+  remote setup is `active`, else connect), then only DTLS records (first byte
+  20-63) are fed to SSL.
+  Capture is up ~3s after connect, down ~3-5s after close. The Comet X returns
+  502 on `/lws/ws` (404 also treated alike) → `CometUnsupportedError` →
+  manager marks itself unsupported, one WARNING. Two modes: camera
+  `async_camera_image` calls `video.wake()` (15s hold) when the snapshot
+  fails and `source_online` is not true; with `keep_video_active`,
+  `_continuous_loop` holds a session continuously if still offline 10s after
+  the WS connects (backoff 10s→300s). Deps are imported lazily via
+  executor (`_load_deps`). Remaining limitation: a Comet X with HDMI
+  unplugged looks "offline" and may start a session needlessly, which then
+  502s → unsupported (logged once).
 - On `401`/`403` (HTTP or WS handshake), re-login **once** and retry; a
   second failure raises `CometAuthError` → `ConfigEntryAuthFailed` (HA
   reauth). `429` raises `CometRateLimitError(remaining_time)` →

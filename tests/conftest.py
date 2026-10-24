@@ -560,5 +560,143 @@ def _stub_homeassistant() -> None:
         sys.modules.setdefault(name, module)
 
 
+def _stub_video_deps() -> None:
+    """Install fake ``aioice`` and ``OpenSSL.SSL`` (cryptography stays real)."""
+    if getattr(sys.modules.get("aioice"), "_glinet_comet_stub", False):
+        return
+    import asyncio
+
+    class FakeCandidate:
+        def __init__(self, sdp):
+            self.sdp = sdp
+
+        @classmethod
+        def from_sdp(cls, sdp):
+            return cls(sdp)
+
+    class FakeLocal:
+        def __init__(self, n):
+            self.n = n
+
+        def to_sdp(self):
+            return f"{self.n} 1 udp 1 1.1.1.{self.n} {self.n} typ host"
+
+    class FakeConnection:
+        instances: list = []
+
+        def __init__(self, ice_controlling=False):
+            self.ice_controlling = ice_controlling
+            self.local_username = "LUF"
+            self.local_password = "LPW"
+            self.local_candidates = []
+            self.remote_username = None
+            self.remote_password = None
+            self.remote: list = []
+            self.sent: list = []
+            self.rx: asyncio.Queue = asyncio.Queue()
+            self.connected = False
+            self.closed = False
+            FakeConnection.instances.append(self)
+
+        async def gather_candidates(self):
+            self.local_candidates = [FakeLocal(1), FakeLocal(2)]
+
+        async def add_remote_candidate(self, cand):
+            self.remote.append(cand)
+
+        async def connect(self):
+            self.connected = True
+
+        async def recv(self):
+            return await self.rx.get()
+
+        async def send(self, data):
+            self.sent.append(data)
+
+        async def close(self):
+            self.closed = True
+
+    class Error(Exception):
+        pass
+
+    class WantReadError(Error):
+        pass
+
+    class ZeroReturnError(Error):
+        pass
+
+    class FakeContext:
+        def __init__(self, method):
+            pass
+
+        def __getattr__(self, name):
+            return lambda *a, **k: None
+
+    class FakeSSL:
+        instances: list = []
+
+        def __init__(self, ctx):
+            self.handshakes = 0
+            self.written: list = []
+            self.state = None
+            self._out = [b"\x16hello"]
+            FakeSSL.instances.append(self)
+
+        def set_accept_state(self):
+            self.state = "accept"
+
+        def set_connect_state(self):
+            self.state = "connect"
+
+        def do_handshake(self):
+            self.handshakes += 1
+            if self.handshakes == 1:
+                raise WantReadError()
+
+        def bio_read(self, n):
+            if self._out:
+                return self._out.pop(0)
+            raise Error()
+
+        def bio_write(self, data):
+            self.written.append(data)
+
+        def recv(self, n):
+            raise WantReadError()
+
+        def DTLSv1_get_timeout(self):
+            return None
+
+        def DTLSv1_handle_timeout(self):
+            pass
+
+        def get_peer_certificate(self):
+            return None
+
+        def get_cipher_name(self):
+            return "FAKE"
+
+    ssl_mod = _mod(
+        "OpenSSL.SSL",
+        Context=FakeContext,
+        Connection=FakeSSL,
+        Error=Error,
+        WantReadError=WantReadError,
+        ZeroReturnError=ZeroReturnError,
+        DTLS_METHOD=1,
+        VERIFY_PEER=1,
+        VERIFY_FAIL_IF_NO_PEER_CERT=2,
+    )
+    sys.modules["aioice"] = _mod(
+        "aioice",
+        _glinet_comet_stub=True,
+        Connection=FakeConnection,
+        Candidate=FakeCandidate,
+    )
+    sys.modules["OpenSSL"] = _mod("OpenSSL", SSL=ssl_mod)
+    sys.modules["OpenSSL.SSL"] = ssl_mod
+
+
 _stub_voluptuous()
 _stub_homeassistant()
+_stub_video_deps()

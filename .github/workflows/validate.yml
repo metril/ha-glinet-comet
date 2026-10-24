@@ -52,7 +52,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      - run: pip install homeassistant pyotp numpy PyTurboJPEG av
+      - run: pip install homeassistant pyotp numpy PyTurboJPEG av aioice pyopenssl cryptography
       - name: Import all platform modules
         run: |
           cd "$GITHUB_WORKSPACE"
@@ -73,6 +73,7 @@ jobs:
               "custom_components.glinet_comet.diagnostics",
               "custom_components.glinet_comet.gpio",
               "custom_components.glinet_comet.data",
+              "custom_components.glinet_comet.video_session",
           ]
           failed = False
           loaded = {}

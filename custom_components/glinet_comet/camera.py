@@ -13,6 +13,7 @@ from homeassistant.components.camera import Camera
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from . import parsers
 from .api import CometError
 from .coordinator import CometDataUpdateCoordinator
 from .data import CometConfigEntry
@@ -59,8 +60,20 @@ class CometScreenCamera(CometEntity, Camera):
         (returning ``None``) rather than raised, matching how Home Assistant
         expects a camera to report "no image right now".
         """
+        client = self.coordinator.client
         try:
-            return await self.coordinator.client.get_snapshot()
+            snap = await client.get_snapshot()
         except CometError:
             _LOGGER.debug("Failed to fetch Comet snapshot", exc_info=True)
+            snap = None
+        if snap is not None:
+            return snap
+        if parsers.source_online(self.coordinator.data or {}):
+            return None
+        if not await self.coordinator.video.wake():
+            return None
+        try:
+            return await client.get_snapshot()
+        except CometError:
+            _LOGGER.debug("Failed to fetch Comet snapshot after wake", exc_info=True)
             return None

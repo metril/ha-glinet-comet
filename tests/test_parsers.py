@@ -911,3 +911,10 @@ def test_switch_port_options_cached_by_model_identity():
     assert parsers.switch_port_options(data) is first
     data2 = {"switch_model": {"ports": [{"id": "1.1", "channel": 0, "name": "B"}]}}
     assert parsers.switch_port_options(data2) == {"B": "1.1"}
+
+
+def test_source_online():
+    assert parsers.source_online({"streamer": {"streamer": {"source": {"online": True}}}}) is True
+    assert parsers.source_online({"streamer": {"streamer": {"source": {"online": False}}}}) is False
+    assert parsers.source_online({"streamer": {"streamer": None}}) is None
+    assert parsers.source_online({}) is None

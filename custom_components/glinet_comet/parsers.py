@@ -141,6 +141,14 @@ def hdmi_signal(data: dict[str, Any]) -> bool | None:
     return _as_bool(_dig(streamer, "source.online"))
 
 
+def source_online(data: dict[str, Any]) -> bool | None:
+    """Return whether the capture source is online (``None`` if streamer is down)."""
+    streamer = _dig(data, "streamer.streamer")
+    if not isinstance(streamer, dict):
+        return None
+    return _as_bool(_dig(streamer, "source.online"))
+
+
 def hdmi_out_signal(data: dict[str, Any]) -> bool | None:
     """Return whether the HDMI output signal is present."""
     streamer = _dig(data, "streamer.streamer")

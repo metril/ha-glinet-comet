@@ -1598,3 +1598,29 @@ async def test_hostname_gated_and_rearmed_on_ws_reconnect():
     assert "hostname" in coord._slow_last
     await coord._ws_connect_and_listen()
     assert "hostname" not in coord._slow_last
+
+
+@pytest.mark.asyncio
+async def test_async_stop_cancels_ws_task_before_video_stop():
+    coord = make_coordinator(FakeClient())
+    order: list[str] = []
+
+    async def _never_ending():
+        try:
+            await asyncio.sleep(3600)
+        except asyncio.CancelledError:
+            order.append("ws_cancelled")
+            raise
+
+    class _Video:
+        async def stop(self):
+            order.append("video_stop")
+
+    task = asyncio.ensure_future(_never_ending())
+    await asyncio.sleep(0)
+    coord._ws_task = task
+    coord.video = _Video()
+
+    await coord.async_stop()
+
+    assert order == ["ws_cancelled", "video_stop"]
