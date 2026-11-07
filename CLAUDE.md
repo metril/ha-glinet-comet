@@ -186,9 +186,7 @@ which runs `glkvm` — GL.iNet's fork of PiKVM's `kvmd`.
 
 ## Conventions
 
-- GitHub identity: `metril`. Commit messages are plain, imperative,
-  present-tense summaries ("Add X", "Fix Y") — no AI/assistant mentions, no
-  Co-Authored-By trailers.
+- Commit messages are plain, imperative, present-tense summaries ("Add X", "Fix Y").
 - Dev tooling via `uv` (`uv venv`, `uv run pytest -q`,
   `uv run python tools/dump_api.py`).
 - `api.py` is a clean-room implementation against the documented kvmd-style
