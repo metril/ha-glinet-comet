@@ -118,7 +118,8 @@ def _stub_homeassistant() -> None:
             self.unique_id = unique_id
             return None
 
-        def _abort_if_unique_id_configured(self) -> None:
+        def _abort_if_unique_id_configured(self, updates=None) -> None:
+            self.abort_updates = updates
             if self.unique_id in self._configured_unique_ids:
                 raise _AbortFlow("already_configured")
 
@@ -246,6 +247,7 @@ def _stub_homeassistant() -> None:
         PERCENTAGE="%",
         UnitOfTemperature=_UnitOfTemperature,
         UnitOfDataRate=_UnitOfDataRate,
+        EVENT_HOMEASSISTANT_STOP="homeassistant_stop",
     )
     class _HAError(Exception):
         def __init__(
@@ -363,11 +365,30 @@ def _stub_homeassistant() -> None:
     class _NumberSelectorMode:
         SLIDER = "slider"
 
+    class _TextSelectorConfig:
+        def __init__(self, *a, **k) -> None:
+            pass
+
+    class _TextSelector:
+        def __init__(self, *a, **k) -> None:
+            pass
+
+    class _TextSelectorType:
+        PASSWORD = "password"
+
     ha_selector = _mod(
         "homeassistant.helpers.selector",
         NumberSelector=_NumberSelector,
         NumberSelectorConfig=_NumberSelectorConfig,
         NumberSelectorMode=_NumberSelectorMode,
+        TextSelector=_TextSelector,
+        TextSelectorConfig=_TextSelectorConfig,
+        TextSelectorType=_TextSelectorType,
+    )
+    ha_er = _mod(
+        "homeassistant.helpers.entity_registry",
+        async_get=MagicMock(),
+        async_entries_for_config_entry=MagicMock(return_value=[]),
     )
 
     ha_helpers.update_coordinator = ha_uc
@@ -376,6 +397,7 @@ def _stub_homeassistant() -> None:
     ha_helpers.device_registry = ha_dr
     ha_helpers.event = ha_evt
     ha_helpers.selector = ha_selector
+    ha_helpers.entity_registry = ha_er
     ha_helpers.entity_platform = ha_ep
     ha_helpers.entity = ha_entity
     ha_helpers.typing = ha_typing
@@ -542,6 +564,7 @@ def _stub_homeassistant() -> None:
         "homeassistant.helpers.device_registry": ha_dr,
         "homeassistant.helpers.event": ha_evt,
         "homeassistant.helpers.selector": ha_selector,
+        "homeassistant.helpers.entity_registry": ha_er,
         "homeassistant.helpers.entity_platform": ha_ep,
         "homeassistant.helpers.entity": ha_entity,
         "homeassistant.helpers.typing": ha_typing,
@@ -700,3 +723,20 @@ def _stub_video_deps() -> None:
 _stub_voluptuous()
 _stub_homeassistant()
 _stub_video_deps()
+
+
+def pytest_collection_modifyitems(config, items):
+    """Deterministic CI sharding: SHARD (1-based) of SHARDS, by crc32(nodeid)."""
+    import os
+    import zlib
+
+    shard, shards = os.environ.get("SHARD"), os.environ.get("SHARDS")
+    if not shard or not shards:
+        return
+    idx, total = int(shard) - 1, int(shards)
+    keep, drop = [], []
+    for item in items:
+        (keep if zlib.crc32(item.nodeid.encode()) % total == idx else drop).append(item)
+    if drop:
+        config.hook.pytest_deselected(items=drop)
+        items[:] = keep

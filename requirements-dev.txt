@@ -1,4 +1,8 @@
 pytest
 pytest-asyncio
+pytest-xdist
 aiohttp
 pyotp
+aioice
+pyOpenSSL
+cryptography
