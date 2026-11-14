@@ -871,3 +871,26 @@ async def test_set_hid_mouse_output_params():
     parts = urlsplit(url)
     assert parts.path == "/api/hid/set_params"
     assert parse_qs(parts.query) == {"mouse_output": ["usb_rel"]}
+
+
+@pytest.mark.asyncio
+async def test_type_text_timeout_scales_with_length():
+    session = _FakeSession([_login_ok(), _ok({})])
+    client = _client(session, http_timeout=10)
+    await client.type_text("x" * 1000)
+    kw = session.requests[-1][2]
+    assert kw["timeout"].total == pytest.approx(10 + 1000 * 0.05)
+
+
+@pytest.mark.asyncio
+async def test_ws_connect_handshake_is_bounded():
+    import asyncio as _a
+
+    class Hang(_FakeSession):
+        async def ws_connect(self, url, **kwargs):
+            await _a.sleep(10)
+
+    session = Hang([_login_ok()])
+    client = _client(session, http_timeout=0.05)
+    with pytest.raises(CometConnectionError):
+        await client.connect_ws()

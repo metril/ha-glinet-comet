@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import contextlib
+from typing import Any
 
-from homeassistant.const import Platform
+from homeassistant.const import EVENT_HOMEASSISTANT_STOP, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -28,6 +29,7 @@ from .data import CometConfigEntry, CometRuntimeData
 from .services import async_setup_services
 
 __all__ = ["CometConfigEntry", "CometRuntimeData"]
+
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
@@ -65,12 +67,32 @@ async def async_setup_entry(hass: HomeAssistant, entry: CometConfigEntry) -> boo
     )
 
     coordinator = CometDataUpdateCoordinator(hass, entry, client)
-    await coordinator.async_config_entry_first_refresh()
+    try:
+        await coordinator.async_config_entry_first_refresh()
 
-    entry.runtime_data = CometRuntimeData(coordinator, client)
+        entry.runtime_data = CometRuntimeData(coordinator, client)
 
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-    await coordinator.async_start()
+        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+        await coordinator.async_start()
+    except BaseException:
+        # Tokens are expire=0: don't leak one per failed setup attempt.
+        with contextlib.suppress(Exception):
+            await coordinator.async_stop()
+        with contextlib.suppress(Exception):
+            await client.async_logout()
+        raise
+
+    async def _logout_on_stop(_event: Any) -> None:
+        # Stop the WS/video tasks first, or the dropped token triggers a
+        # reconnect -> fresh login during shutdown.
+        with contextlib.suppress(Exception):
+            await coordinator.async_stop()
+        with contextlib.suppress(Exception):
+            await client.async_logout()
+
+    entry.async_on_unload(
+        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _logout_on_stop)
+    )
 
     return True
 

@@ -1624,3 +1624,70 @@ async def test_async_stop_cancels_ws_task_before_video_stop():
     await coord.async_stop()
 
     assert order == ["ws_cancelled", "video_stop"]
+
+
+def test_ws_backoff_exponent_capped_no_overflow():
+    coord = make_coordinator(FakeClient())
+    coord._ws_failures = 5000
+    assert coord._next_ws_delay() <= 300
+
+
+@pytest.mark.asyncio
+async def test_slow_read_skipped_when_ws_frame_applied_meanwhile():
+    client = FakeClient()
+    coord = make_coordinator(client)
+    await coord._async_update_data()
+    orig = client.get_gpio
+
+    async def slow_gpio():
+        res = await orig()
+        # a newer WS gpio frame lands while the GET is in flight
+        coord._process_ws_message({"event_type": "gpio", "event": {"state": {"inputs": {}, "outputs": {}}}})
+        return res
+
+    client.get_gpio = slow_gpio
+    applied: list[str] = []
+    real = coord._apply_read
+    coord._apply_read = lambda k, r: (applied.append(k), real(k, r))[1]
+    await coord._async_update_data()
+    assert "gpio" not in applied and "atx" in applied
+
+
+async def test_health_frame_does_not_supersede_info_system_read():
+    client = FakeClient()
+    coord = make_coordinator(client)
+    orig = client.get_info
+
+    async def get_info(fields):
+        res = await orig(fields)
+        if fields == "system":
+            coord._process_ws_message(
+                {"event_type": "info", "event": {"health": {"cpu": {"percent": 5}}}}
+            )
+        return res
+
+    client.get_info = get_info
+    applied: list[str] = []
+    real = coord._apply_read
+    coord._apply_read = lambda k, r: (applied.append(k), real(k, r))[1]
+    await coord._async_update_data()
+    assert "info_system" in applied
+    assert "info_system" in coord._slow_last
+
+
+async def test_superseded_slow_read_not_stamped():
+    client = FakeClient()
+    coord = make_coordinator(client)
+    orig = client.get_info
+
+    async def get_info(fields):
+        res = await orig(fields)
+        if fields == "system":
+            coord._process_ws_message(
+                {"event_type": "info", "event": {"system": {"kernel": {}}}}
+            )
+        return res
+
+    client.get_info = get_info
+    await coord._async_update_data()
+    assert "info_system" not in coord._slow_last

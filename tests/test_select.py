@@ -287,3 +287,42 @@ async def test_mouse_select_options_current_and_write():
     assert ent.current_option == "usb"
     await ent.async_select_option("usb_rel")
     assert client.calls == [("mouse", "usb_rel")]
+
+
+@pytest.mark.asyncio
+async def test_select_image_preserves_cdrom_rw():
+    client = FakeClient()
+    coord, entity = make_select(
+        client, {"msd": {"drive": {"connected": False, "cdrom": False, "rw": True}}}
+    )
+    coord.async_update_listeners = lambda: None
+    await entity.async_select_option("a.iso")
+    assert client.calls == [
+        ("set_msd_params", (), {"image": "a.iso", "cdrom": False, "rw": True})
+    ]
+
+
+@pytest.mark.asyncio
+async def test_select_image_marks_disconnected_when_set_params_fails():
+    class Fail(FakeClient):
+        async def set_msd_params(self, **kw):
+            raise CometApiError("boom")
+
+    coord, entity = make_select(
+        Fail(), {"msd": {"drive": {"connected": True, "image": "old.iso"}}}
+    )
+    coord.async_update_listeners = lambda: None
+    with pytest.raises(HomeAssistantError):
+        await entity.async_select_option("new.iso")
+    assert coord.data["msd"]["drive"]["connected"] is False
+
+
+def test_mouse_output_current_none_when_not_in_options():
+    from custom_components.glinet_comet.select import CometMouseOutputSelect
+
+    coord = CometDataUpdateCoordinator(FakeHass(), FakeEntry(), FakeClient())
+    coord.data = {"hid": {"mouse": {"outputs": {"active": "weird", "available": ["usb"]}}}}
+    ent = CometMouseOutputSelect(coord, coord.entry)
+    assert ent.current_option is None
+    coord.data["hid"]["mouse"]["outputs"]["active"] = "usb"
+    assert ent.current_option == "usb"
