@@ -191,8 +191,15 @@ class CometVideoSession:
     async def _read_loop(self) -> None:
         try:
             async for m in self._ws:
-                if m.type != aiohttp.WSMsgType.TEXT:
+                if m.type in (
+                    aiohttp.WSMsgType.CLOSE,
+                    aiohttp.WSMsgType.CLOSING,
+                    aiohttp.WSMsgType.CLOSED,
+                    aiohttp.WSMsgType.ERROR,
+                ):
                     break
+                if m.type != aiohttp.WSMsgType.TEXT:
+                    continue
                 try:
                     await self._handle(json.loads(m.data))
                 except asyncio.CancelledError:
@@ -343,6 +350,7 @@ class CometVideoManager:
         self._stopped = False
         self._warned: set[str] = set()
         self._online_event = asyncio.Event()
+        self._start_task: asyncio.Task[None] | None = None
 
     def notify_streamer(self, state: dict[str, Any]) -> None:
         """Track capture-source online state from coordinator state."""
@@ -364,7 +372,17 @@ class CometVideoManager:
             try:
                 deps = await _load_deps(self._hass)
                 session = CometVideoSession(self._coord.client, deps)
-                await asyncio.wait_for(session.start(), START_TIMEOUT)
+                self._start_task = asyncio.ensure_future(session.start())
+                try:
+                    await asyncio.wait_for(self._start_task, START_TIMEOUT)
+                finally:
+                    self._start_task = None
+            except asyncio.CancelledError:
+                if self._stopped and not (
+                    (t := asyncio.current_task()) and t.cancelling()
+                ):
+                    return False  # stop() cancelled our start, not the caller
+                raise
             except (CometUnsupportedError, ImportError) as err:
                 self._unsupported = True
                 _LOGGER.warning(
@@ -423,12 +441,25 @@ class CometVideoManager:
 
     async def _hold_loop(self) -> None:
         try:
-            while (rem := self._deadline - monotonic()) > 0:
-                await asyncio.sleep(rem)
-            if not self._continuous:
-                await self._stop_session()
+            while True:
+                while (rem := self._deadline - monotonic()) > 0:
+                    await asyncio.sleep(rem)
+                async with self._lock:
+                    # wake() may have extended the deadline while we waited
+                    # for the lock; re-check under it before stopping.
+                    if self._deadline - monotonic() > 0:
+                        continue
+                    self._hold_task = None
+                    if not self._continuous:
+                        session, self._session = self._session, None
+                        if session is not None:
+                            # Shielded: a cancel from stop() must not leave
+                            # this already-detached session half-closed.
+                            await asyncio.shield(session.stop())
+                    return
         finally:
-            self._hold_task = None
+            if self._hold_task is asyncio.current_task():
+                self._hold_task = None
 
     def async_on_ws_connected(self) -> None:
         """Start the continuous hold if the PoE needs it."""
@@ -467,6 +498,8 @@ class CometVideoManager:
     async def stop(self) -> None:
         """Cancel background tasks and close the session."""
         self._stopped = True
+        if self._start_task is not None:
+            self._start_task.cancel()  # don't wait out START_TIMEOUT on the lock
         for name in ("_cont_task", "_hold_task"):
             task = getattr(self, name)
             setattr(self, name, None)

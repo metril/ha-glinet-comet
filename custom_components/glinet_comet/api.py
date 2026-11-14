@@ -266,6 +266,7 @@ class CometApiClient:
         reader: Callable[[aiohttp.ClientResponse], Awaitable[_T]],
         *,
         allow_reauth: bool = True,
+        timeout: float | None = None,
         **kwargs: Any,
     ) -> _T:
         """Issue an authenticated request, re-login-and-retry once on 401/403.
@@ -289,7 +290,9 @@ class CometApiClient:
                     url,
                     headers=headers,
                     ssl=self._ssl,
-                    timeout=aiohttp.ClientTimeout(total=self._http_timeout),
+                    timeout=aiohttp.ClientTimeout(
+                        total=self._http_timeout if timeout is None else timeout
+                    ),
                     **kwargs,
                 ) as resp:
                     _LOGGER.debug(
@@ -508,10 +511,12 @@ class CometApiClient:
 
     async def type_text(self, text: str, keymap: str = "en") -> None:
         """Type text on the remote system."""
+        # hid/print blocks until the whole text is typed; scale the timeout.
         await self._request(
             "POST",
             f"/api/hid/print?{urlencode({'keymap': keymap})}",
             data=text,
+            timeout=self._http_timeout + len(text) * 0.05,
         )
 
     async def send_shortcut(self, keys: str) -> None:
@@ -603,9 +608,10 @@ class CometApiClient:
             token = await self._get_token()
             url = f"wss://{self._host}{path}?{query}auth_token={quote(token, safe='')}"
             try:
-                return await self._session.ws_connect(
-                    url, ssl=self._ssl, heartbeat=heartbeat
-                )
+                async with asyncio.timeout(self._http_timeout):
+                    return await self._session.ws_connect(
+                        url, ssl=self._ssl, heartbeat=heartbeat
+                    )
             except aiohttp.WSServerHandshakeError as err:
                 # `from None`: err (and its request_info.real_url) embeds the
                 # wss:// URL, which carries auth_token=<token> in its query

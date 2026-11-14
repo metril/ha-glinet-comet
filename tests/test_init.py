@@ -134,3 +134,85 @@ def test_no_update_listener_or_hass_data_usage():
 
     assert "add_update_listener" not in inspect.getsource(integration)
     assert "hass.data" not in inspect.getsource(integration)
+
+
+@pytest.mark.asyncio
+async def test_setup_failure_logs_out_and_stops(monkeypatch):
+    created = {}
+
+    class Coord(FakeCoordinator):
+        def __init__(self, hass, entry, client):
+            super().__init__()
+            created["c"] = self
+
+        async def async_config_entry_first_refresh(self):
+            raise RuntimeError("boom")
+
+    class Client(FakeClient):
+        def __init__(self, *a, **k):
+            super().__init__()
+            created["cl"] = self
+
+    monkeypatch.setattr(integration, "CometDataUpdateCoordinator", Coord)
+    monkeypatch.setattr(integration, "CometApiClient", Client)
+    monkeypatch.setattr(integration, "async_get_clientsession", lambda *a, **k: None)
+
+    class E(FakeEntry):
+        data = {"host": "h", "password": "p"}
+        options: dict = {}
+
+    with pytest.raises(RuntimeError):
+        await integration.async_setup_entry(FakeHass(True), E())
+    assert created["c"].stopped and created["cl"].logged_out
+
+
+@pytest.mark.asyncio
+async def test_setup_registers_stop_logout_listener(monkeypatch):
+    created = {}
+
+    class Coord(FakeCoordinator):
+        def __init__(self, hass, entry, client):
+            super().__init__()
+
+        async def async_config_entry_first_refresh(self):
+            pass
+
+        async def async_start(self):
+            pass
+
+    class Client(FakeClient):
+        def __init__(self, *a, **k):
+            super().__init__()
+            created["cl"] = self
+
+    monkeypatch.setattr(integration, "CometDataUpdateCoordinator", Coord)
+    monkeypatch.setattr(integration, "CometApiClient", Client)
+    monkeypatch.setattr(integration, "async_get_clientsession", lambda *a, **k: None)
+
+    class Entries(FakeConfigEntries):
+        async def async_forward_entry_setups(self, entry, platforms):
+            pass
+
+    class Bus:
+        cbs: list = []
+
+        def async_listen_once(self, ev, cb):
+            self.cbs.append((ev, cb))
+            return lambda: None
+
+    hass = FakeHass(True)
+    hass.config_entries = Entries(True)
+    hass.bus = Bus()
+    unloads = []
+
+    class E(FakeEntry):
+        data = {"host": "h", "password": "p"}
+        options: dict = {}
+
+        def async_on_unload(self, fn):
+            unloads.append(fn)
+
+    assert await integration.async_setup_entry(hass, E()) is True
+    assert unloads and hass.bus.cbs[0][0] == "homeassistant_stop"
+    await hass.bus.cbs[0][1](None)
+    assert created["cl"].logged_out

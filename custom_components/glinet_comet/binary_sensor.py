@@ -18,6 +18,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from . import parsers
 from .data import CometConfigEntry
 from .const import CONF_ENABLE_ATX, DEFAULT_ENABLE_ATX
+from .atx_cleanup import async_remove_atx_entities
 from .coordinator import CometDataUpdateCoordinator
 from .entity import (
     CometAtxEntity,
@@ -134,6 +135,8 @@ async def async_setup_entry(
     """Set up GL.iNet Comet binary sensors."""
     coordinator: CometDataUpdateCoordinator = entry.runtime_data.coordinator
     enable_atx = entry.options.get(CONF_ENABLE_ATX, DEFAULT_ENABLE_ATX)
+    if not enable_atx:
+        async_remove_atx_entities(hass, entry, "binary_sensor")
 
     entities: list[BinarySensorEntity] = []
     for description in BINARY_SENSORS:

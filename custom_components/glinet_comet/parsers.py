@@ -469,22 +469,30 @@ def _number(value: Any) -> float | int | None:
     return value
 
 
-# One-entry caches keyed on the raw ``switch_model.ports`` list object (held
-# here and compared with ``is``, so a recycled id() can never alias).
-_ports_cache: tuple[list[Any], list[dict[str, Any]]] | None = None
-_options_cache: tuple[list[Any], dict[str, str]] | None = None
+# Small bounded caches keyed on id() of the raw ``switch_model.ports`` list;
+# the list itself is stored and compared with ``is`` so a recycled id() can
+# never alias. Several Comet X entries therefore don't thrash a single slot.
+_CACHE_MAX = 8
+_ports_cache: dict[int, tuple[list[Any], list[dict[str, Any]]]] = {}
+_options_cache: dict[int, tuple[list[Any], dict[str, str]]] = {}
+
+
+def _cache_put(cache: dict[int, Any], ports: list[Any], result: Any) -> None:
+    if len(cache) >= _CACHE_MAX:
+        cache.pop(next(iter(cache)))
+    cache[id(ports)] = (ports, result)
 
 
 def switch_ports(data: dict[str, Any]) -> list[dict[str, Any]]:
     """Return the switch model's port dicts that have a str ``id`` and int ``channel``."""
-    global _ports_cache
     ports = _dig(data, "switch_model.ports")
     if not isinstance(ports, list):
         return []
-    if _ports_cache is not None and _ports_cache[0] is ports:
-        return _ports_cache[1]
+    hit = _ports_cache.get(id(ports))
+    if hit is not None and hit[0] is ports:
+        return hit[1]
     result = _filter_ports(ports)
-    _ports_cache = (ports, result)
+    _cache_put(_ports_cache, ports, result)
     return result
 
 
@@ -517,10 +525,11 @@ def switch_port_name(port: dict[str, Any]) -> str:
 
 def switch_port_options(data: dict[str, Any]) -> dict[str, str]:
     """Return ``{display_name: port_id}``; duplicate names get ``"name (id)"``."""
-    global _options_cache
     raw = _dig(data, "switch_model.ports")
-    if isinstance(raw, list) and _options_cache is not None and _options_cache[0] is raw:
-        return _options_cache[1]
+    if isinstance(raw, list):
+        hit = _options_cache.get(id(raw))
+        if hit is not None and hit[0] is raw:
+            return hit[1]
     ports = switch_ports(data)
     names = [switch_port_name(p) for p in ports]
     counts = Counter(names)
@@ -529,7 +538,7 @@ def switch_port_options(data: dict[str, Any]) -> dict[str, str]:
         for p, name in zip(ports, names)
     }
     if isinstance(raw, list):
-        _options_cache = (raw, result)
+        _cache_put(_options_cache, raw, result)
     return result
 
 

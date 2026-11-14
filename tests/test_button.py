@@ -120,8 +120,11 @@ async def test_gpio_pulse_button_delay_zero_when_channel_vanishes():
     assert client.gpio_pulse_calls == [("out_pulse", 0)]
 
 
-async def _setup(data: dict) -> list:
-    coord = CometDataUpdateCoordinator(FakeHass(), FakeEntry(), FakeClient())
+async def _setup(data: dict, options: dict | None = None) -> list:
+    entry = FakeEntry()
+    if options:
+        entry.options = options
+    coord = CometDataUpdateCoordinator(FakeHass(), entry, FakeClient())
     coord.data = data
     hass = FakeHass()
     coord.entry.runtime_data = SimpleNamespace(coordinator=coord, client=None)
@@ -381,3 +384,53 @@ async def test_late_switch_model_adds_port_buttons_once():
     coord.async_update_listeners()
     coord.async_update_listeners()
     assert len([e for e in added if type(e).__name__ == "CometSwitchPortAtxButton"]) == 12
+
+
+def _ent(domain: str, uid: str, eid: str):
+    return SimpleNamespace(domain=domain, unique_id=uid, entity_id=eid)
+
+
+@pytest.mark.asyncio
+async def test_atx_disabled_removes_stale_atx_registry_entries(monkeypatch):
+    from custom_components.glinet_comet import atx_cleanup
+
+    p = "test_entry_"
+    ents = [
+        _ent("button", p + "atx_power", "button.a"),
+        _ent("button", p + "atx_reset", "button.b"),
+        _ent("button", p + "switch_port_2_atx_power_long", "button.c"),
+        _ent("button", p + "hid_reset", "button.keep1"),
+        _ent("button", p + "reboot", "button.keep2"),
+        _ent("binary_sensor", p + "atx_power", "binary_sensor.other_domain"),
+    ]
+    removed: list = []
+    registry = SimpleNamespace(async_remove=removed.append)
+    monkeypatch.setattr(atx_cleanup.er, "async_get", lambda hass: registry)
+    monkeypatch.setattr(
+        atx_cleanup.er, "async_entries_for_config_entry", lambda reg, eid: ents
+    )
+    await _setup(_load_fixture("state_gpio.json"), {"enable_atx": False})
+    assert sorted(removed) == ["button.a", "button.b", "button.c"]
+
+
+@pytest.mark.asyncio
+async def test_atx_disabled_removes_binary_sensor_entries(monkeypatch):
+    from custom_components.glinet_comet import atx_cleanup
+
+    p = "test_entry_"
+    ents = [
+        _ent("binary_sensor", p + "atx_power", "binary_sensor.a"),
+        _ent("binary_sensor", p + "atx_hdd_activity", "binary_sensor.b"),
+        _ent("binary_sensor", p + "switch_port_1_hdd", "binary_sensor.c"),
+        _ent("binary_sensor", p + "switch_port_1_power", "binary_sensor.d"),
+        _ent("binary_sensor", p + "switch_port_1_video", "binary_sensor.keep"),
+        _ent("binary_sensor", p + "hdmi_signal", "binary_sensor.keep2"),
+    ]
+    removed: list = []
+    registry = SimpleNamespace(async_remove=removed.append)
+    monkeypatch.setattr(atx_cleanup.er, "async_get", lambda hass: registry)
+    monkeypatch.setattr(
+        atx_cleanup.er, "async_entries_for_config_entry", lambda reg, eid: ents
+    )
+    atx_cleanup.async_remove_atx_entities(None, SimpleNamespace(entry_id="test_entry"), "binary_sensor")
+    assert sorted(removed) == ["binary_sensor.a", "binary_sensor.b", "binary_sensor.c", "binary_sensor.d"]

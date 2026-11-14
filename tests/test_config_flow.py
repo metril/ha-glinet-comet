@@ -299,3 +299,11 @@ async def test_options_flow_round_trip():
 
     result = await flow.async_step_init(None)
     assert result["type"] == "form"
+
+
+async def test_user_step_existing_entry_updates_host(fake_client):
+    flow = config_flow.CometConfigFlow()
+    flow._configured_unique_ids = {"SN-1"}
+    with pytest.raises(AbortFlow):
+        await flow.async_step_user(_user_input())
+    assert flow.abort_updates == {CONF_HOST: "10.0.0.5"}

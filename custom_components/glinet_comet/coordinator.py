@@ -111,6 +111,13 @@ def _deep_merge(dest: dict[str, Any], src: dict[str, Any]) -> bool:
     return changed
 
 
+# Slow-tier read key -> WS generation keys whose change supersedes it.
+_WS_GEN_KEYS: dict[str, tuple[str, ...]] = {
+    "info_system": ("info.system", "info.auth", "info.meta", "info.extras"),
+    "health": ("info.health",),
+}
+
+
 class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Coordinator combining a slow HTTP-poll tier with WebSocket push."""
 
@@ -157,6 +164,9 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "unsupported": [],
             "ws_connected": False,
         }
+        # Bumped per WS frame applied to a subsystem; a slow-tier GET that was
+        # in flight meanwhile is stale and must not overwrite the newer frame.
+        self._ws_gen: dict[str, int] = {}
         self._ws_handlers: dict[str, Callable[[dict[str, Any]], bool]] = {
             "atx": self._process_atx_event,
             "hid": self._process_hid_event,
@@ -236,6 +246,7 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         add_optional("gpio", lambda: self.client.get_gpio())
 
         keys = [*core.keys(), *optional.keys()]
+        gen_before = dict(self._ws_gen)
         results = await asyncio.gather(
             *core.values(), *optional.values(), return_exceptions=True
         )
@@ -314,10 +325,16 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         for key, result in by_key.items():
             if isinstance(result, BaseException):
                 continue
+            if any(
+                self._ws_gen.get(g, 0) != gen_before.get(g, 0)
+                for g in _WS_GEN_KEYS.get(key, (key,))
+            ):
+                _LOGGER.debug("Comet: %s read superseded by a newer WS frame", key)
+                continue
             self._apply_read(key, result)
-
-        for key in _SLOW_GATED:
-            if key in by_key and not isinstance(by_key[key], BaseException):
+            if key in _SLOW_GATED:
+                # Stamp only reads that landed: a superseded one retries
+                # next cycle instead of waiting out SLOW_READ_INTERVAL.
                 self._slow_last[key] = now
 
         # Only relax the first-cycle gate if a core read actually landed in
@@ -446,7 +463,7 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         ):
             self._ws_failures = 0  # the last connection was stable
         self._ws_connected_at = None
-        delay = min(base * 2**self._ws_failures, max(_WS_BACKOFF_CAP, base))
+        delay = min(base * 2 ** min(self._ws_failures, 16), max(_WS_BACKOFF_CAP, base))
         self._ws_failures += 1
         return delay
 
@@ -530,6 +547,12 @@ class CometDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # Includes hid_keymaps/ocr/recorder/fingerbot/serial/rndis/turn/
             # ap/repeater/modem and any other frame we don't model yet.
             return
+        # info frames carry one section each (system/health/...), so track
+        # those per section; a health push must not supersede a system read.
+        for gk in (
+            [f"info.{k}" for k in event] if event_type == "info" else [event_type]
+        ):
+            self._ws_gen[gk] = self._ws_gen.get(gk, 0) + 1
         if handler(event):
             self._push_state()
 

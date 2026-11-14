@@ -96,13 +96,21 @@ class CometMsdImageSelect(CometEntity, SelectEntity):
         data = self.coordinator.data or {}
         image = "" if option == MSD_IMAGE_NONE else option
         was_connected = parsers.msd_connected(data) is True
+        cdrom = parsers.msd_cdrom(data)
+        rw = parsers.msd_rw(data)
+        disconnected = False
         try:
             if was_connected:
                 await self.coordinator.client.set_msd_connected(False)
+                disconnected = True
             await self.coordinator.client.set_msd_params(
-                image=image, cdrom=True, rw=False
+                image=image,
+                cdrom=True if cdrom is None else cdrom,
+                rw=False if rw is None else rw,
             )
         except CometError as err:
+            if disconnected and self.coordinator.data is not None:
+                self.coordinator.push_partial("msd", {"drive": {"connected": False}})
             raise HomeAssistantError(str(err)) from err
         if self.coordinator.data is not None:
             drive: dict[str, Any] = {"image": image or None}
@@ -181,7 +189,8 @@ class CometMouseOutputSelect(CometEntity, SelectEntity):
     @property
     def current_option(self) -> str | None:
         """Return the active mouse output."""
-        return parsers.mouse_output_active(self.coordinator.data or {})
+        active = parsers.mouse_output_active(self.coordinator.data or {})
+        return active if active in self.options else None
 
     async def async_select_option(self, option: str) -> None:
         """Set the mouse output."""

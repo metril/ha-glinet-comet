@@ -918,3 +918,12 @@ def test_source_online():
     assert parsers.source_online({"streamer": {"streamer": {"source": {"online": False}}}}) is False
     assert parsers.source_online({"streamer": {"streamer": None}}) is None
     assert parsers.source_online({}) is None
+
+
+def test_switch_port_caches_do_not_thrash_across_entries():
+    a = {"switch_model": {"ports": [{"id": "1.1", "channel": 0, "name": "A"}]}}
+    b = {"switch_model": {"ports": [{"id": "1.1", "channel": 0, "name": "B"}]}}
+    pa, pb = parsers.switch_ports(a), parsers.switch_ports(b)
+    oa, ob = parsers.switch_port_options(a), parsers.switch_port_options(b)
+    assert parsers.switch_ports(a) is pa and parsers.switch_ports(b) is pb
+    assert parsers.switch_port_options(a) is oa and parsers.switch_port_options(b) is ob

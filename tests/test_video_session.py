@@ -356,3 +356,38 @@ async def test_stop_during_concurrent_wake(monkeypatch):
     assert await m.wake() is False
     m.async_on_ws_connected()
     assert m._cont_task is None
+
+
+async def test_read_loop_survives_non_text_frame():
+    client, ws, s = await started()
+    ws.q.put_nowait(Msg(aiohttp.WSMsgType.BINARY, b"x"))
+    await spin(5)
+    assert s.alive
+    await s.stop()
+
+
+async def test_hold_loop_rechecks_deadline_under_lock(monkeypatch):
+    monkeypatch.setattr(vs, "ONLINE_BUDGET", 0.05)
+    m, client, _ = mgr()
+    await m.wake(hold=0.2)
+    await m._lock.acquire()  # simulate pending stop contending for the lock
+    await asyncio.sleep(0.3)
+    m._deadline = vs.monotonic() + 0.3  # wake() extends meanwhile
+    m._lock.release()
+    await asyncio.sleep(0.1)
+    assert m._session is not None  # not stopped despite earlier expiry
+    await asyncio.sleep(0.5)
+    assert m._session is None and m._hold_task is None
+    await m.stop()
+
+
+async def test_stop_cancels_inflight_start_promptly():
+    class Slow(FakeClient):
+        async def connect_lws(self):
+            await asyncio.sleep(10)
+
+    m, _, _ = mgr(Slow())
+    w = asyncio.create_task(m.wake())
+    await asyncio.sleep(0.05)
+    await asyncio.wait_for(m.stop(), 2)
+    assert await asyncio.wait_for(w, 2) is False

@@ -68,3 +68,17 @@ async def test_coordinator_data_serial_is_redacted():
     result = await async_get_config_entry_diagnostics(hass, entry)
 
     assert result["coordinator"]["info"]["system"]["platform"]["serial"] == "**REDACTED**"
+
+
+@pytest.mark.asyncio
+async def test_nested_uuid_and_usb_host_are_redacted():
+    entry = FakeEntry()
+    entry.entry_id = "test_entry"
+    coordinator = FakeCoordinator(
+        {"info": {"extras": {"a": {"uuid": "U-1", "usb_host": "H-1", "ok": 1}}}}
+    )
+    result = await async_get_config_entry_diagnostics(FakeHass(entry, coordinator), entry)
+    extras = result["coordinator"]["info"]["extras"]["a"]
+    assert extras["uuid"] == "**REDACTED**"
+    assert extras["usb_host"] == "**REDACTED**"
+    assert extras["ok"] == 1
