@@ -20,6 +20,9 @@ from homeassistant.helpers.selector import (
     NumberSelector,
     NumberSelectorConfig,
     NumberSelectorMode,
+    TextSelector,
+    TextSelectorConfig,
+    TextSelectorType,
 )
 
 from .api import (
@@ -72,14 +75,17 @@ def _unique_id_from_info(info: dict[str, Any], host: str) -> str:
     return str(serial) if serial else host
 
 
+_PASSWORD_SELECTOR = TextSelector(TextSelectorConfig(type=TextSelectorType.PASSWORD))
+
+
 def _step_user_schema() -> vol.Schema:
     """Schema for the initial user step (no pre-filled defaults)."""
     return vol.Schema(
         {
             vol.Required(CONF_HOST): str,
             vol.Required(CONF_USERNAME, default=DEFAULT_USERNAME): str,
-            vol.Required(CONF_PASSWORD): str,
-            vol.Optional(CONF_TOTP_SECRET, default=""): str,
+            vol.Required(CONF_PASSWORD): _PASSWORD_SELECTOR,
+            vol.Optional(CONF_TOTP_SECRET, default=""): _PASSWORD_SELECTOR,
             vol.Optional(CONF_VERIFY_SSL, default=DEFAULT_VERIFY_SSL): bool,
         }
     )
@@ -93,10 +99,10 @@ def _step_reconfigure_schema(defaults: dict[str, Any]) -> vol.Schema:
             vol.Required(
                 CONF_USERNAME, default=defaults.get(CONF_USERNAME, DEFAULT_USERNAME)
             ): str,
-            vol.Required(CONF_PASSWORD): str,
+            vol.Required(CONF_PASSWORD): _PASSWORD_SELECTOR,
             vol.Optional(
                 CONF_TOTP_SECRET, default=defaults.get(CONF_TOTP_SECRET, "")
-            ): str,
+            ): _PASSWORD_SELECTOR,
             vol.Optional(
                 CONF_VERIFY_SSL,
                 default=defaults.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL),
@@ -109,10 +115,10 @@ def _step_reauth_schema(defaults: dict[str, Any]) -> vol.Schema:
     """Schema for reauth confirmation, pre-filled from the existing entry data."""
     return vol.Schema(
         {
-            vol.Required(CONF_PASSWORD): str,
+            vol.Required(CONF_PASSWORD): _PASSWORD_SELECTOR,
             vol.Optional(
                 CONF_TOTP_SECRET, default=defaults.get(CONF_TOTP_SECRET, "")
-            ): str,
+            ): _PASSWORD_SELECTOR,
         }
     )
 
@@ -138,7 +144,7 @@ class CometConfigFlow(ConfigFlow, domain=DOMAIN):
             else:
                 host = user_input[CONF_HOST]
                 await self.async_set_unique_id(_unique_id_from_info(extra, host))
-                self._abort_if_unique_id_configured()
+                self._abort_if_unique_id_configured(updates={CONF_HOST: host})
                 return self.async_create_entry(
                     title=f"Comet ({host})", data=user_input
                 )

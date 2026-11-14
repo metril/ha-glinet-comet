@@ -23,6 +23,8 @@ TO_REDACT = {
     "gateway",
     "dns_servers",
     "hostname",
+    "uuid",
+    "usb_host",
 }
 
 

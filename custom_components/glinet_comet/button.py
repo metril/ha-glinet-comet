@@ -20,6 +20,7 @@ from . import parsers
 from .data import CometConfigEntry
 from .api import CometApiClient, CometError
 from .const import CONF_ENABLE_ATX, DEFAULT_ENABLE_ATX
+from .atx_cleanup import async_remove_atx_entities
 from .coordinator import CometDataUpdateCoordinator
 from .entity import (
     CometAtxEntity,
@@ -104,6 +105,8 @@ async def async_setup_entry(
     """Set up GL.iNet Comet buttons."""
     coordinator: CometDataUpdateCoordinator = entry.runtime_data.coordinator
     enable_atx = entry.options.get(CONF_ENABLE_ATX, DEFAULT_ENABLE_ATX)
+    if not enable_atx:
+        async_remove_atx_entities(hass, entry, "button")
 
     entities: list[ButtonEntity] = []
     for description in BUTTONS:
