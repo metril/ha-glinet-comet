@@ -144,8 +144,8 @@ which runs `glkvm` — GL.iNet's fork of PiKVM's `kvmd`.
   404 on the PoE (V1.10.1 release2) → `unsupported`, no port entities.
   Port entities/selects are added dynamically via `switch_ports.py`
   (object-identity guard on `switch_model`, per-port dedupe, never removed).
-  `custom_screen/status` is 200 on the X only. Switch writes
-  (`switch/set_active`, `switch/atx/click`) and `hid/set_params?mouse_output`
+  `custom_screen/status` is 200 on the X only. `switch/set_active` is verified (see Comet X section); other writes
+  (`switch/atx/click`) and `hid/set_params?mouse_output`
   are unverified live; never use `switch/reset` (reboots the unit).
 - `streamer.streamer` can be `null` and the snapshot endpoint can 503 when
   no one has an active video viewer — always null-check / JPEG-magic-check
@@ -249,6 +249,14 @@ Existing reads match the RM1PE shapes. New:
 - `info.health`: `cpu.percent`, `mem.percent`, `temp.cpu`, `net.rx_rate/tx_rate`, `throttling`.
 - `hid.mouse.outputs {active:"usb", available:[usb,usb_rel,usb_hybrid,usb_touch]}` (also on the PoE).
 - Fixture: `tests/fixtures/state_live_rm4pe.json`.
+- **Verified 2026-10-25:** `POST switch/set_active?port=<id>` → 200 `{}`;
+  `summary.active_id` flips immediately and the single capture pipeline
+  follows the active port (no WS reconnect). On a port with no source:
+  `hdmi.signal` false, `source.real_resolution` `"no_signal"`, snapshot 503,
+  but **`source.online` stays `true`** — so on the X `source_online()` never
+  triggers a video wake (the "HDMI unplugged → needless session" limitation
+  above doesn't occur in practice). Back to a live port: signal + 200
+  snapshot within ~1s.
 
 ## Destructive GET routes — never probe
 
