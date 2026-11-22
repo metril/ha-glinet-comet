@@ -134,6 +134,10 @@ which runs `glkvm` — GL.iNet's fork of PiKVM's `kvmd`.
 - Video tests need `aioice`/`pyOpenSSL`/`cryptography` in `requirements-dev.txt`.
   hassfest rejects HA-core deps (e.g. `pyOpenSSL`) in `manifest.json` requirements.
 - Python 3.14 (HA 2026.11 needs >=3.14.2); `.python-version` pins it.
+- pyotp >=2.12 raises `ValueError` for TOTP secrets under 112 bits — test
+  secrets must be 32 base32 chars (real Comet secrets are). A bad secret is
+  `invalid_totp` in the config flow and `CometAuthError` (→ reauth, no POST)
+  in `api.py`.
 - `CometApiError.status` (HTTP status; `200` for an `ok:false` envelope;
   `None` for an unparseable body) is what the coordinator uses to decide
   whether an optional read is unsupported: only `400`/`404` mark a field
