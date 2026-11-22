@@ -104,7 +104,7 @@ def _client(session, **kwargs) -> CometApiClient:
 async def test_login_appends_fresh_totp_code(monkeypatch):
     monkeypatch.setattr("pyotp.TOTP.now", lambda self: "123456")
     session = _FakeSession([_login_ok()])
-    client = _client(session, totp_secret="JBSWY3DPEHPK3PXP")
+    client = _client(session, totp_secret="JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP")
 
     await client.async_login()
 
@@ -156,7 +156,7 @@ async def test_login_computes_fresh_code_every_call(monkeypatch):
     codes = iter(["111111", "222222"])
     monkeypatch.setattr("pyotp.TOTP.now", lambda self: next(codes))
     session = _FakeSession([_login_ok("A"), _login_ok("B")])
-    client = _client(session, totp_secret="JBSWY3DPEHPK3PXP")
+    client = _client(session, totp_secret="JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP")
 
     await client.async_login()
     await client.async_login()

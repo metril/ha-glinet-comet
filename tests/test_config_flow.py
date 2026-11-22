@@ -137,6 +137,13 @@ async def test_user_step_defaults_username_and_verify_ssl(fake_client):
     assert client.verify_ssl is False
 
 
+async def test_user_step_invalid_totp_secret(fake_client):
+    flow = config_flow.CometConfigFlow()
+    result = await flow.async_step_user(_user_input(**{"totp_secret": "JBSWY3DPEHPK3PXP"}))
+    assert result["errors"]["base"] == "invalid_totp"
+    assert len(fake_client.instances) == 0
+
+
 async def test_user_step_invalid_auth(fake_client):
     fake_client.error = CometAuthError("nope")
     flow = config_flow.CometConfigFlow()
@@ -159,7 +166,7 @@ async def test_user_step_cannot_connect(fake_client):
 
 
 async def test_user_step_unknown(fake_client):
-    fake_client.error = ValueError("boom")
+    fake_client.error = RuntimeError("boom")
     flow = config_flow.CometConfigFlow()
     result = await flow.async_step_user(_user_input())
     assert result["errors"]["base"] == "unknown"
@@ -203,10 +210,10 @@ async def test_reauth_confirm_updates_password_and_totp(fake_client):
     flow = config_flow.CometConfigFlow()
     flow._reauth_entry = entry
     await flow.async_step_reauth_confirm(
-        {CONF_PASSWORD: "newpass", CONF_TOTP_SECRET: "NEWSECRET"}
+        {CONF_PASSWORD: "newpass", CONF_TOTP_SECRET: "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"}
     )
     assert entry.data[CONF_PASSWORD] == "newpass"
-    assert entry.data[CONF_TOTP_SECRET] == "NEWSECRET"
+    assert entry.data[CONF_TOTP_SECRET] == "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
     assert entry.data[CONF_HOST] == "10.0.0.5"
 
 

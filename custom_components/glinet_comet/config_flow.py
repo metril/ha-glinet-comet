@@ -6,6 +6,7 @@ import contextlib
 import logging
 from typing import Any
 
+import pyotp
 import voluptuous as vol
 
 from homeassistant.config_entries import (
@@ -249,6 +250,12 @@ class CometConfigFlow(ConfigFlow, domain=DOMAIN):
         id). On a rate-limit error, ``extra`` is ``{"seconds": ...}`` for use
         as ``description_placeholders``. Otherwise ``extra`` is empty.
         """
+        if data.get(CONF_TOTP_SECRET):
+            # Validate locally so a bad secret never costs a device login attempt.
+            try:
+                pyotp.TOTP(data[CONF_TOTP_SECRET]).now()
+            except ValueError:  # binascii.Error subclasses ValueError
+                return "invalid_totp", {}
         verify_ssl = data.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL)
         session = async_get_clientsession(self.hass, verify_ssl=verify_ssl)
         client = CometApiClient(

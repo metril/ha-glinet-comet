@@ -44,6 +44,7 @@
     "error": {
       "cannot_connect": "Failed to connect to the Comet",
       "invalid_auth": "Password or 2FA code rejected — check the password, the 2FA secret, and that this host's clock is NTP-synced",
+      "invalid_totp": "The 2FA secret is not a valid base32 TOTP secret (it must decode to at least 112 bits)",
       "rate_limited": "The Comet is rate-limiting logins; wait {seconds} seconds",
       "unknown": "Unexpected error"
     },

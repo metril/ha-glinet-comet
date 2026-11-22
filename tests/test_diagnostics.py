@@ -28,7 +28,7 @@ class FakeEntry:
             "host": "10.0.0.5",
             "username": "admin",
             "password": "hunter2",
-            "totp_secret": "JBSWY3DPEHPK3PXP",
+            "totp_secret": "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
         }
         self.options: dict = {}
 
