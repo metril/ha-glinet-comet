@@ -11,3 +11,5 @@ docs/superpowers/
 .cometx_pass
 # Local API dumps may contain identifying data (serial, token, IPs) — never commit
 comet_api_dump.json
+# Local MCP server config
+.mcp.json

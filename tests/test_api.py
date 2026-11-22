@@ -152,6 +152,17 @@ async def test_login_without_totp_secret_sends_plain_password():
 
 
 @pytest.mark.asyncio
+async def test_login_with_invalid_totp_secret_raises_auth_error_without_post():
+    session = _FakeSession([_login_ok()])
+    client = _client(session, totp_secret="!!notbase32!!")
+
+    with pytest.raises(CometAuthError):
+        await client.async_login()
+
+    assert session.requests == []
+
+
+@pytest.mark.asyncio
 async def test_login_computes_fresh_code_every_call(monkeypatch):
     codes = iter(["111111", "222222"])
     monkeypatch.setattr("pyotp.TOTP.now", lambda self: next(codes))

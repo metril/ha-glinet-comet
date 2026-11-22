@@ -118,7 +118,12 @@ class CometApiClient:
     def _login_password(self) -> str:
         """Build the login password, appending a fresh TOTP code if configured."""
         if self._totp_secret:
-            return f"{self._password}{pyotp.TOTP(self._totp_secret).now()}"
+            try:
+                code = pyotp.TOTP(self._totp_secret).now()
+            except ValueError as err:  # malformed/too-short base32 secret
+                # Raised before any POST, so it never counts toward the lockout.
+                raise CometAuthError("invalid 2FA secret") from err
+            return f"{self._password}{code}"
         return self._password
 
     async def async_login(self) -> None:
